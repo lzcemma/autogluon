@@ -6,6 +6,8 @@ from .utils import init_weights
 from ..constants import LABEL, LOGITS, FEATURES, WEIGHT, AUTOMM
 from .mlp import MLP
 from .ft_transformer import FT_Transformer, CLSToken
+from omegaconf import OmegaConf, DictConfig
+from .augment_vae import MultiModalAugmentation
 
 logger = logging.getLogger(AUTOMM)
 
@@ -28,6 +30,7 @@ class MultimodalFusionMLP(nn.Module):
         dropout_prob: Optional[float] = 0.5,
         normalization: Optional[str] = "layer_norm",
         loss_weight: Optional[float] = None,
+        aug_config: Optional[DictConfig] = None,
     ):
         """
         Parameters
@@ -105,6 +108,14 @@ class MultimodalFusionMLP(nn.Module):
         self.fusion_mlp = nn.Sequential(*fusion_mlp)
         # in_features has become the latest hidden size
         self.head = nn.Linear(in_features, num_classes)
+
+        # adverasial trained augmentation network for features
+        model_feature_dict = [(per_model.prefix, per_model.out_features) for per_model in models]
+        self.augmenter = None
+        self.aug_flag = aug_config.turn_on
+        if aug_config != None and aug_config.turn_on:
+            self.augmenter = MultiModalAugmentation(aug_config, model_feature_dict)
+
         # init weights
         self.adapter.apply(init_weights)
         self.fusion_mlp.apply(init_weights)
@@ -119,10 +130,7 @@ class MultimodalFusionMLP(nn.Module):
     def label_key(self):
         return f"{self.prefix}_{LABEL}"
 
-    def forward(
-        self,
-        batch: dict,
-    ):
+    def forward(self, batch: dict, is_training: Optional[bool]):
         """
 
         Parameters
@@ -138,14 +146,23 @@ class MultimodalFusionMLP(nn.Module):
         features. Otherwise, it returns a list of dictionaries collecting all the models' output,
         including the fusion model's.
         """
+        multimodal_output = {}
+        aug_loss = None
+        for per_model in self.model:
+            per_output = per_model(batch)
+            multimodal_output[per_model.prefix] = per_output
+
+        if self.augmenter is not None:
+            if is_training:
+                multimodal_output, aug_loss = self.augmenter(multimodal_output)
+
         multimodal_features = []
         output = {}
         for per_model, per_adapter in zip(self.model, self.adapter):
-            per_output = per_model(batch)
-            multimodal_features.append(per_adapter(per_output[per_model.prefix][FEATURES]))
+            multimodal_features.append(per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES]))
             if self.loss_weight is not None:
-                per_output[per_model.prefix].update({WEIGHT: self.loss_weight})
-                output.update(per_output)
+                multimodal_output[per_model.prefix][per_model.prefix].update({WEIGHT: self.loss_weight})
+                output.update(multimodal_output[per_model.prefix])
 
         features = self.fusion_mlp(torch.cat(multimodal_features, dim=1))
         logits = self.head(features)
@@ -158,9 +175,13 @@ class MultimodalFusionMLP(nn.Module):
         if self.loss_weight is not None:
             fusion_output[self.prefix].update({WEIGHT: 1})
             output.update(fusion_output)
-            return output
         else:
-            return fusion_output
+            output = fusion_output
+
+        if aug_loss is not None:
+            output.update({"augmenter": aug_loss})
+
+        return output
 
     def get_layer_ids(
         self,
@@ -187,6 +208,7 @@ class MultimodalFusionMLP(nn.Module):
         names = [n for n, _ in self.named_parameters()]
 
         outer_layer_names = [n for n in names if not n.startswith(model_prefix)]
+
         name_to_id = {}
         logger.debug(f"outer layers are treated as head: {outer_layer_names}")
         for n in outer_layer_names:

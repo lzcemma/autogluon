@@ -124,6 +124,9 @@ CATEGORICAL_TRANSFORMER = "categorical_transformer"
 FUSION_MLP = "fusion_mlp"
 FUSION_TRANSFORMER = "fusion_transformer"
 
+# augmentation net
+AUGNET = "mm_augnet"
+
 # metric learning loss type
 CONTRASTIVE_LOSS = "contrastive_loss"
 

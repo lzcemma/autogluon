@@ -27,6 +27,7 @@ from .models import (
     NumericalTransformer,
     CategoricalTransformer,
     MultimodalFusionTransformer,
+    MultiModalAugmentation,
 )
 from .data import (
     ImageProcessor,
@@ -67,6 +68,7 @@ from .constants import (
     METRIC_MODE_MAP,
     VALID_METRICS,
     VALID_CONFIG_KEYS,
+    AUGNET,
 )
 from .presets import (
     list_model_presets,
@@ -739,6 +741,7 @@ def create_model(
                 dropout_prob=model_config.drop_rate,
                 normalization=model_config.normalization,
                 loss_weight=model_config.weight if hasattr(model_config, "weight") else None,
+                aug_config=OmegaConf.select(model_config, "augmenter"),
             )
             continue
         elif model_name.lower().startswith(FUSION_TRANSFORMER):
@@ -760,6 +763,7 @@ def create_model(
                 head_activation=model_config.head_activation,
                 adapt_in_features=model_config.adapt_in_features,
                 loss_weight=model_config.weight if hasattr(model_config, "weight") else None,
+                aug_config=OmegaConf.select(model_config, "augmenter"),
             )
             continue
         else:

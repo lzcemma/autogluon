@@ -129,16 +129,45 @@ class LitModule(pl.LightningModule):
         label: torch.Tensor,
     ):
         loss = 0
-        for _, per_output in output.items():
-            weight = per_output[WEIGHT] if WEIGHT in per_output else 1
-            loss += (
-                self.loss_func(
-                    input=per_output[LOGITS].squeeze(dim=1),
-                    target=label,
+        for name, per_output in output.items():
+            if name != "augmenter":
+                weight = per_output[WEIGHT] if WEIGHT in per_output else 1
+                loss += (
+                    self.loss_func(
+                        input=per_output[LOGITS].squeeze(dim=1),
+                        target=label,
+                    )
+                    * weight
                 )
-                * weight
-            )
+
+        if "augmenter" in output.keys():
+            aug_loss = 0
+            for _, l in output["augmenter"].items():
+                # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
+                aug_loss += l["regularizer"] * l["reg_weight"] + l["KLD_loss"] * l["kl_weight"]
+
+            loss += aug_loss
         return loss
+
+    def on_before_optimizer_step(self, optimizer, optimizer_idx):
+        if self.model.aug_flag:
+            for name, param in self.model.named_parameters():
+                if param.requires_grad:
+                    if name.startswith("augmenter"):
+                        param.grad *= -0.001
+
+        # for name, param in self.model.named_parameters():
+        #     if name == "head.weight":
+        #         print(name)
+        #         print(param.grad)
+        #     if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
+        #         print(name)
+        #         print(param.grad)
+        #     if name == "model.2.model.vision_model.encoder.layers.11.mlp.fc2.weight":
+        #         print(name)
+        #         print(param.grad)
+        # exit()
+        return super().on_before_optimizer_step(optimizer, optimizer_idx)
 
     def _compute_metric_score(
         self,
@@ -165,7 +194,7 @@ class LitModule(pl.LightningModule):
         if self.mixup_fn is not None:
             self.mixup_fn.mixup_enabled = self.training & (self.current_epoch < self.hparams.mixup_off_epoch)
             batch, label = multimodel_mixup(batch=batch, model=self.model, mixup_fn=self.mixup_fn)
-        output = self.model(batch)
+        output = self.model(batch, self.training)
         loss = self._compute_loss(output=output, label=label)
         return output, loss
 
@@ -244,7 +273,7 @@ class LitModule(pl.LightningModule):
         -------
         A dictionary with the mini-batch's logits and features.
         """
-        output = self.model(batch)
+        output = self.model(batch, self.training)
         return output[self.model.prefix]
 
     def configure_optimizers(self):

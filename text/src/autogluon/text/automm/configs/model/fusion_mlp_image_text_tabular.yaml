@@ -6,6 +6,7 @@ model:
     - "timm_image"
     - "clip"
     - "fusion_mlp"
+
   categorical_mlp:
     hidden_size: 64
     activation: "leaky_relu"
@@ -69,7 +70,6 @@ model:
       # - "random_delete(0.05)"        # less than 0.1 based on eda paper
       # - "syn_replacement(0.05)"  # less than 0.1 based on eda paper
       # - "insert_punc(0.05)"
-
   timm_image:
     checkpoint_name: "swin_base_patch4_window7_224"
     mix_choice: "all_logits"
@@ -78,7 +78,7 @@ model:
     train_transform_types:
       - "resize_shorter_side"
       - "center_crop"
-      - "trivial_augment"
+      # - "trivial_augment"
     val_transform_types:
       - "resize_shorter_side"
       - "center_crop"
@@ -93,7 +93,7 @@ model:
     train_transform_types:
       - "resize_shorter_side"
       - "center_crop"
-      - "trivial_augment"
+      # - "trivial_augment"
     val_transform_types:
       - "resize_shorter_side"
       - "center_crop"
@@ -121,6 +121,13 @@ model:
     drop_rate: 0.1
     normalization: "layer_norm"
     data_types:
+    augmenter:
+      turn_on: True
+      z_dim: 8
+      n_layer: 2
+      kl_loss_weight: 0.001
+      regularizer_loss_weight: 0.001
+      adv_weight: 1.0
   fusion_transformer:
     hidden_size: 192
     n_blocks: 3
