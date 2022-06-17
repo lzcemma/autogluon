@@ -84,27 +84,8 @@ class MultiModalAugmentation(nn.Module):
         self.augnets.apply(init_weights)
         self.name_to_id = self.get_layer_ids()
 
-    def forward(self, batch: dict):
-        loss = {}
-        for k, _ in self.feature_dims:
-            # batch[k][k][FEATURES].register_hook(lambda grad: grad * -self.config.adv_weight)
-            new, m, v = self.augnets[k](batch[k][k][FEATURES])
-            # new.register_hook(lambda grad: grad * -self.config.adv_weight)
-            regularize_loss = self.l2_regularize(batch[k][k][FEATURES], new)
-            KLD_loss = self.kld(m, v) / new.size(0)
-
-            loss.update(
-                {
-                    k: {
-                        "regularizer": regularize_loss,
-                        "KLD_loss": KLD_loss,
-                        "reg_weight": self.config.regularizer_loss_weight,
-                        "kl_weight": self.config.kl_loss_weight,
-                    }
-                }
-            )
-            batch[k][k][FEATURES] = new
-        return batch, loss
+    def forward(self, k, x):
+        return self.augnets[k](x)
 
     def l2_regularize(self, x, x_new):
         return F.mse_loss(x_new, x, reduction="mean")

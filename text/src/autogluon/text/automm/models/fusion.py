@@ -1,6 +1,7 @@
+from audioop import mul
 import logging
 import torch
-from torch import nn
+from torch import detach, nn
 from typing import List, Optional
 from .utils import init_weights
 from ..constants import LABEL, LOGITS, FEATURES, WEIGHT, AUTOMM
@@ -113,6 +114,8 @@ class MultimodalFusionMLP(nn.Module):
         model_feature_dict = [(per_model.prefix, per_model.out_features) for per_model in models]
         self.augmenter = None
         self.aug_flag = aug_config.turn_on
+        self.aug_adv_weight = aug_config.adv_weight
+        self.aug_config = aug_config
         if aug_config != None and aug_config.turn_on:
             self.augmenter = MultiModalAugmentation(aug_config, model_feature_dict)
 
@@ -147,14 +150,40 @@ class MultimodalFusionMLP(nn.Module):
         including the fusion model's.
         """
         multimodal_output = {}
-        aug_loss = None
         for per_model in self.model:
             per_output = per_model(batch)
             multimodal_output[per_model.prefix] = per_output
 
+        # pass through augmentation network
+        aug_loss = None
         if self.augmenter is not None:
             if is_training:
-                multimodal_output, aug_loss = self.augmenter(multimodal_output)
+                aug_loss = {}
+
+                for per_model in self.model:
+                    k = per_model.prefix
+                    # for kl, mse loss
+                    detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
+                    new, m, v = self.augmenter(k, detached_feature)
+                    regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                    KLD_loss = self.augmenter.kld(m, v) / new.size(0)
+
+                    aug_loss.update(
+                        {
+                            k: {
+                                "regularizer": regularize_loss,
+                                "KLD_loss": KLD_loss,
+                                "reg_weight": self.aug_config.regularizer_loss_weight,
+                                "kl_weight": self.aug_config.kl_loss_weight,
+                            }
+                        }
+                    )
+
+                    # to pass in fusion
+                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad)
+                    multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
+                    multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
+                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad)
 
         multimodal_features = []
         output = {}

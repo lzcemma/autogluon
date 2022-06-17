@@ -125,8 +125,8 @@ model:
       turn_on: True
       z_dim: 8
       n_layer: 2
-      kl_loss_weight: 0.001
-      regularizer_loss_weight: 0.001
+      kl_loss_weight: 0.1
+      regularizer_loss_weight: 0.1
       adv_weight: 1.0
   fusion_transformer:
     hidden_size: 192
