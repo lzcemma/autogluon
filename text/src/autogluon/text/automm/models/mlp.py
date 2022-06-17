@@ -39,14 +39,16 @@ class Unit(nn.Module):
         if normalization == "layer_norm":
             self.norm = nn.LayerNorm(in_features)
         else:
-            raise ValueError(f"unknown normalization: {normalization}")
+            self.norm = None
+            #raise ValueError(f"unknown normalization: {normalization}")
         self.fc = nn.Linear(in_features, out_features)
         self.act_fn = ALL_ACT_LAYERS[activation]()
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
         # pre normalization
-        x = self.norm(x)
+        if self.norm is not None:
+            x = self.norm(x)
         x = self.fc(x)
         x = self.act_fn(x)
         x = self.dropout(x)

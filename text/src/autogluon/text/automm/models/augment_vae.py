@@ -82,6 +82,10 @@ class MultiModalAugmentation(nn.Module):
             hidden = [*range(d - step, self.config.z_dim + step, -step)]
             self.augnets.update([[k, VAE(input_dim=d, hidden_dim=hidden, z_dim=self.config.z_dim)]])
         self.augnets.apply(init_weights)
+
+        for k in self.augnets.keys():
+            self.augnets[k].decoder[-1].fc.weight.data.zero_()
+
         self.name_to_id = self.get_layer_ids()
 
     def forward(self, k, x):

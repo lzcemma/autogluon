@@ -166,8 +166,7 @@ class MultimodalFusionMLP(nn.Module):
                     detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
                     new, m, v = self.augmenter(k, detached_feature)
                     regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                    KLD_loss = self.augmenter.kld(m, v) / new.size(0)
-
+                    KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
                     aug_loss.update(
                         {
                             k: {
@@ -180,10 +179,10 @@ class MultimodalFusionMLP(nn.Module):
                     )
 
                     # to pass in fusion
-                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad)
+                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * (1 / self.aug_config.adv_weight))
                     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
                     multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
-                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad)
+                    multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
         multimodal_features = []
         output = {}

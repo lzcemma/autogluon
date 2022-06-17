@@ -155,26 +155,20 @@ class LitModule(pl.LightningModule):
 
         return loss
 
-    def on_before_optimizer_step(self, optimizer, optimizer_idx):
-        # for name, param in self.model.named_parameters():
-        #     # print(name)
-        #     if name == "head.weight":
-        #         print(name)
-        #         print(param.grad)
-        #     if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
-        #         print(name)
-        #         print(param.grad)
-        #     if name == "model.0.model.encoder.layer.11.output.LayerNorm.weight":
-        #         print(name)
-        #         print(param.grad)
-        # exit()
-        if self.model.aug_flag:
-            for name, param in self.model.named_parameters():
-                if param.requires_grad:
-                    if name.startswith("augmenter"):
-                        param.grad *= -1 * self.model.aug_adv_weight
+    # def on_before_optimizer_step(self, optimizer, optimizer_idx):
+    #     # for name, param in self.model.named_parameters():
+    #     #     # print(name)
+    #     #     if name == "head.weight":
+    #     #         print(name)
+    #     #         print(param.grad)
+    #     #     if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
+    #     #         print(name)
+    #     #         print(param.grad)
+    #     #     if name == "model.0.model.encoder.layer.11.output.LayerNorm.weight":
+    #     #         print(name)
+    #     #         print(param.grad)
 
-        return super().on_before_optimizer_step(optimizer, optimizer_idx)
+    #     return super().on_before_optimizer_step(optimizer, optimizer_idx)
 
     def _compute_metric_score(
         self,
