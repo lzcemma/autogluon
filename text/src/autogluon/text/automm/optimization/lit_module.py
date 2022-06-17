@@ -130,7 +130,6 @@ class LitModule(pl.LightningModule):
     ):
         loss = 0
         for name, per_output in output.items():
-
             if name != "augmenter":
                 weight = per_output[WEIGHT] if WEIGHT in per_output else 1
                 loss += (
@@ -142,28 +141,33 @@ class LitModule(pl.LightningModule):
                 )
 
         if "augmenter" in output.keys():
-            aug_loss = 0
+            self.log("loss/target", loss)
+            reg_loss = 0
+            kl_loss = 0
             for _, l in output["augmenter"].items():
                 # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
-                aug_loss += l["regularizer"] * l["reg_weight"] + l["KLD_loss"] * l["kl_weight"]
+                reg_loss += l["regularizer"] * l["reg_weight"]
+                kl_loss += l["KLD_loss"] * l["kl_weight"]
+            self.log("loss/reg_loss", reg_loss)
+            self.log("loss/kl_loss", kl_loss)
 
-            loss += aug_loss
+            loss = loss + reg_loss + kl_loss
+
         return loss
 
     def on_before_optimizer_step(self, optimizer, optimizer_idx):
-        for name, param in self.model.named_parameters():
-            # print(name)
-            if name == "head.weight":
-                print(name)
-                print(param.grad)
-            if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
-                print(name)
-                print(param.grad)
-            if name == "model.0.model.encoder.layer.11.output.LayerNorm.weight":
-                print(name)
-                print(param.grad)
-
-        exit()
+        # for name, param in self.model.named_parameters():
+        #     # print(name)
+        #     if name == "head.weight":
+        #         print(name)
+        #         print(param.grad)
+        #     if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
+        #         print(name)
+        #         print(param.grad)
+        #     if name == "model.0.model.encoder.layer.11.output.LayerNorm.weight":
+        #         print(name)
+        #         print(param.grad)
+        # exit()
         if self.model.aug_flag:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
