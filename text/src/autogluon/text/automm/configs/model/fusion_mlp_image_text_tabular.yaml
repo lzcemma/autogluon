@@ -122,9 +122,13 @@ model:
     normalization: "layer_norm"
     data_types:
     augmenter:
+      arch: "trans"   # trans denotres for transfomer; "n_vae" denotes for VAE for every modality
       turn_on: True
       z_dim: 8
       n_layer: 2
+      n_emb: 8
+      n_head: 8
+      tran_hidden: 2048
       kl_loss_weight: 1.0
       regularizer_loss_weight: 1.0
       adv_weight: 0.0001
