@@ -35,6 +35,13 @@ class VAETransformer(nn.Module):
         decoder_layers = TransformerEncoderLayer(self.emb_d, config.n_head, config.tran_hidden, norm_first=True)
         self.transformer_decoder = TransformerEncoder(decoder_layers, config.n_layer)
 
+        self.last_layer = nn.Linear(self.emb_d, self.emb_d)
+        self.init_parameters()
+
+    def init_parameters(self):
+        self.last_layer.weight.data.zero_()
+        self.last_layer.bias.data.zero_()
+
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
@@ -56,8 +63,7 @@ class VAETransformer(nn.Module):
 
         hidden = self.decoder_fc(z)
 
-        noise = self.transformer_decoder(hidden)[:, : self.n_modality, :]
-
+        noise = self.last_layer(self.transformer_decoder(hidden)[:, : self.n_modality, :])
         recon_x = X.reshape(-1, self.n_modality, self.emb_d) + noise
 
         return recon_x.reshape(len(X), -1), z_mu, z_logvar
@@ -79,11 +85,12 @@ class AugTransformer(nn.Module):
             self.emb_idx = nn.Parameter(torch.arange(0, config.n_emb, dtype=torch.int), requires_grad=False)
 
         self.name_to_id = self.get_layer_ids()
+        self.last_layer = nn.Linear(self.emb_d, self.emb_d)
         self.init_parameters()
 
     def init_parameters(self):
-        self.transformer_encoder.layers[-1].linear2.weight.data.zero_()
-        self.transformer_encoder.layers[-1].linear2.bias.data.zero_()
+        self.last_layer.weight.data.zero_()
+        self.last_layer.bias.data.zero_()
 
     def forward(self, X):
         input = X.reshape(-1, self.n_modality, self.emb_d)  # [B, # modality, emb dim] torch.Size([8, 3, 1024])
@@ -94,7 +101,7 @@ class AugTransformer(nn.Module):
             input = torch.cat([input, emb], dim=1)  # [B, # modality + # emb, emb dim]  torch.Size([8, 19, 1024])
         output = self.transformer_encoder(input)  # [B, # modality + # emb, emb dim]  torch.Size([8, 19, 1024])
 
-        aug_output = output[:, : self.n_modality, :] + X.reshape(
+        aug_output = self.last_layer(output[:, : self.n_modality, :]) + X.reshape(
             -1, self.n_modality, self.emb_d
         )  # [B, # modality, emb_dim] torch.Size([8, 3, 1024])
         return aug_output.reshape(len(X), -1)
