@@ -142,23 +142,33 @@ class LitModule(pl.LightningModule):
 
         if "augmenter" in output.keys():
             self.log("loss/target", loss)
+            reg_loss = 0
+            kl_loss = 0
             if "transformer_augnet" in output["augmenter"].keys():
-                reg_loss = (
-                    output["augmenter"]["transformer_augnet"]["regularizer"]
-                    * output["augmenter"]["transformer_augnet"]["reg_weight"]
-                )
+                if "regularizer" in output["augmenter"]["transformer_augnet"].keys():
+                    reg_loss = (
+                        output["augmenter"]["transformer_augnet"]["regularizer"]
+                        * output["augmenter"]["transformer_augnet"]["reg_weight"]
+                    )
+                if "KLD_loss" in output["augmenter"]["transformer_augnet"].keys():
+                    kl_loss = (
+                        output["augmenter"]["transformer_augnet"]["KLD_loss"]
+                        * output["augmenter"]["transformer_augnet"]["kl_weight"]
+                    )
+                self.log("loss/kl_loss", kl_loss)
                 self.log("loss/reg_loss", reg_loss)
-                loss = loss + reg_loss
+                # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
+                loss = loss + reg_loss + kl_loss
             else:
-                reg_loss = 0
-                kl_loss = 0
                 for _, l in output["augmenter"].items():
                     # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
-                    reg_loss += l["regularizer"] * l["reg_weight"]
-                    kl_loss += l["KLD_loss"] * l["kl_weight"]
+                    if "KLD_loss" in l.keys():
+                        kl_loss += l["KLD_loss"] * l["kl_weight"]
+                    if "regularizer" in l.keys():
+                        reg_loss += l["regularizer"] * l["reg_weight"]
                 self.log("loss/reg_loss", reg_loss)
                 self.log("loss/kl_loss", kl_loss)
-
+                # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
                 loss = loss + reg_loss + kl_loss
 
         return loss
