@@ -1,4 +1,5 @@
 import logging
+from xmlrpc.client import Boolean
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -9,6 +10,7 @@ from .utils import (
     apply_two_stages_lr,
     apply_layerwise_lr_decay,
     apply_single_lr,
+    get_augment_network_parameters,
 )
 from ..constants import LOGITS, WEIGHT, AUTOMM
 from typing import Union, Optional, List, Dict, Callable
@@ -47,6 +49,11 @@ class LitModule(pl.LightningModule):
         efficient_finetune: Optional[str] = None,
         mixup_fn: Optional[MixupModule] = None,
         mixup_off_epoch: Optional[int] = 0,
+        aug_turn_on: Optional[Boolean] = False,
+        aug_lr: Optional[float] = None,
+        aug_optim_type: Optional[str] = None,
+        aug_weight_decay: Optional[float] = None,
+        grad_steps: Optional[int] = 1,
     ):
         """
         Parameters
@@ -122,12 +129,14 @@ class LitModule(pl.LightningModule):
                 "which must be used with a customized metric function."
             )
         self.custom_metric_func = custom_metric_func
+        self.automatic_optimization = False
 
     def _compute_loss(
         self,
         output: Dict,
         label: torch.Tensor,
-    ):
+    ):  
+
         loss = 0
         for name, per_output in output.items():
             if name != "augmenter":
@@ -139,7 +148,7 @@ class LitModule(pl.LightningModule):
                     )
                     * weight
                 )
-
+        self.log("train_loss", loss, prog_bar=True)
         if "augmenter" in output.keys():
             self.log("loss/target", loss)
             reg_loss = 0
@@ -166,11 +175,10 @@ class LitModule(pl.LightningModule):
                         kl_loss += l["KLD_loss"] * l["kl_weight"]
                     if "regularizer" in l.keys():
                         reg_loss += l["regularizer"] * l["reg_weight"]
-                self.log("loss/reg_loss", reg_loss)
-                self.log("loss/kl_loss", kl_loss)
+                self.log("loss/reg_loss", reg_loss, prog_bar=True)
+                self.log("loss/kl_loss", kl_loss, prog_bar=True)
                 # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
                 loss = loss + reg_loss + kl_loss
-
         return loss
 
     # def on_before_optimizer_step(self, optimizer, optimizer_idx):
@@ -236,8 +244,53 @@ class LitModule(pl.LightningModule):
         -------
         Average loss of the mini-batch data.
         """
+        if self.hparams.aug_turn_on:
+            target_optimizer, aug_optimizer = self.optimizers()
+        else:
+            target_optimizer = self.optimizers()
+        target_opt_scheduler = self.lr_schedulers()
+
+        target_optimizer.zero_grad()
+        if self.hparams.aug_turn_on:
+            aug_optimizer.zero_grad()
+
         output, loss = self._shared_step(batch)
-        self.log("train_loss", loss)
+
+        self.manual_backward(loss)
+
+        nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+        target_optimizer.step()
+        target_opt_scheduler.step()
+        if self.hparams.aug_turn_on:
+            aug_optimizer.step()
+
+
+        # # gradient accumulation
+        # if (batch_idx + 1) % self.hparams.grad_steps == 0:
+        #     print(batch_idx)
+        #     nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+        #     target_optimizer.step()
+        #     target_opt_scheduler.step()
+        #     if self.hparams.aug_turn_on:
+        #         aug_optimizer.step()
+
+        #     target_optimizer.zero_grad()
+        #     if self.hparams.aug_turn_on:
+        #         aug_optimizer.zero_grad()
+        #     # for name, param in self.model.named_parameters():
+        #     #     # print(name)
+        #     #     if name == "head.weight":
+        #     #         print(name)
+        #     #         print(param)
+        #     #         print(param.grad)
+
+        #     # exit()
+        #     target_optimizer.zero_grad()
+        #     if self.hparams.aug_turn_on:
+        #         aug_optimizer.zero_grad()
+
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -258,7 +311,7 @@ class LitModule(pl.LightningModule):
         """
         output, loss = self._shared_step(batch)
         # By default, on_step=False and on_epoch=True
-        self.log("val_loss", loss)
+        self.log("val_los", loss)
         self._compute_metric_score(
             metric=self.validation_metric,
             custom_metric_func=self.custom_metric_func,
@@ -370,5 +423,17 @@ class LitModule(pl.LightningModule):
         )
 
         sched = {"scheduler": scheduler, "interval": "step"}
+
+        aug_optimizer = None
+        if self.hparams.aug_turn_on:
+            # augment network optimizer
+            aug_grouped_parameters = get_augment_network_parameters(self.model, self.hparams.aug_lr)
+            aug_optimizer = get_optimizer(
+                optim_type=self.hparams.aug_optim_type,
+                optimizer_grouped_parameters=aug_grouped_parameters,
+                lr=self.hparams.aug_lr,
+                weight_decay=self.hparams.aug_weight_decay,
+            )
+            return [optimizer, aug_optimizer], [sched]
         logger.debug("done configuring optimizer and scheduler")
         return [optimizer], [sched]

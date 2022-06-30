@@ -838,6 +838,42 @@ class AutoMMPredictor:
             train_data=train_df,
             val_data=val_df,
         )
+
+        num_gpus = config.env.num_gpus if isinstance(config.env.num_gpus, int) else len(config.env.num_gpus)
+        if num_gpus < 0:  # In case config.env.num_gpus is -1, meaning using all gpus.
+            num_gpus = torch.cuda.device_count()
+
+        if num_gpus == 0:  # CPU only training
+            warnings.warn(
+                "Only CPU is detected in the instance. "
+                "AutoMMPredictor will be trained with CPU only. "
+                "This may results in slow training speed. "
+                "Consider to switch to an instance with GPU support.",
+                UserWarning,
+            )
+            grad_steps = max(
+                config.env.batch_size // (config.env.per_gpu_batch_size * config.env.num_nodes),
+                1,
+            )
+            precision = 32  # Force to use fp32 for training since fp16-based AMP is not available in CPU.
+            # Try to check the status of bf16 training later.
+        else:
+            grad_steps = max(
+                config.env.batch_size // (config.env.per_gpu_batch_size * num_gpus * config.env.num_nodes),
+                1,
+            )
+            precision = config.env.precision
+
+            if precision == "bf16" and not torch.cuda.is_bf16_supported():
+                warnings.warn(
+                    "bf16 is not supported by the GPU device / cuda version. "
+                    "Consider to use GPU devices with version after Amphere (e.g., available as AWS P4 instances) "
+                    "and upgrade cuda to be >=11.0. "
+                    "Currently, AutoGluon will downgrade the precision to 32.",
+                    UserWarning,
+                )
+                precision = 32
+
         optimization_kwargs = dict(
             optim_type=config.optimization.optim_type,
             lr_choice=config.optimization.lr_choice,
@@ -848,7 +884,13 @@ class AutoMMPredictor:
             lr_mult=config.optimization.lr_mult,
             weight_decay=config.optimization.weight_decay,
             warmup_steps=config.optimization.warmup_steps,
+            aug_turn_on=config.optimization.aug_turn_on,
+            aug_lr=config.optimization.aug_learning_rate,
+            aug_optim_type=config.optimization.aug_optim_type,
+            aug_weight_decay=config.optimization.aug_weight_decay,
+            grad_steps=grad_steps,
         )
+
         metrics_kwargs = dict(
             validation_metric=validation_metric,
             validation_metric_name=validation_metric_name,
@@ -936,41 +978,6 @@ class AutoMMPredictor:
             version="",
         )
 
-        num_gpus = config.env.num_gpus if isinstance(config.env.num_gpus, int) else len(config.env.num_gpus)
-        if num_gpus < 0:  # In case config.env.num_gpus is -1, meaning using all gpus.
-            num_gpus = torch.cuda.device_count()
-
-        if num_gpus == 0:  # CPU only training
-            warnings.warn(
-                "Only CPU is detected in the instance. "
-                "AutoMMPredictor will be trained with CPU only. "
-                "This may results in slow training speed. "
-                "Consider to switch to an instance with GPU support.",
-                UserWarning,
-            )
-            grad_steps = max(
-                config.env.batch_size // (config.env.per_gpu_batch_size * config.env.num_nodes),
-                1,
-            )
-            precision = 32  # Force to use fp32 for training since fp16-based AMP is not available in CPU.
-            # Try to check the status of bf16 training later.
-        else:
-            grad_steps = max(
-                config.env.batch_size // (config.env.per_gpu_batch_size * num_gpus * config.env.num_nodes),
-                1,
-            )
-            precision = config.env.precision
-
-            if precision == "bf16" and not torch.cuda.is_bf16_supported():
-                warnings.warn(
-                    "bf16 is not supported by the GPU device / cuda version. "
-                    "Consider to use GPU devices with version after Amphere (e.g., available as AWS P4 instances) "
-                    "and upgrade cuda to be >=11.0. "
-                    "Currently, AutoGluon will downgrade the precision to 32.",
-                    UserWarning,
-                )
-                precision = 32
-
         if not hpo_mode:
             if num_gpus <= 1:
                 strategy = None
@@ -995,9 +1002,6 @@ class AutoMMPredictor:
                 max_time=max_time,
                 callbacks=callbacks,
                 logger=tb_logger,
-                gradient_clip_val=1,
-                gradient_clip_algorithm="norm",
-                accumulate_grad_batches=grad_steps,
                 log_every_n_steps=10,
                 enable_progress_bar=enable_progress_bar,
                 fast_dev_run=config.env.fast_dev_run,

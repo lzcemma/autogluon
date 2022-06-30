@@ -352,6 +352,23 @@ def apply_single_lr(
     return optimizer_grouped_parameters
 
 
+def get_augment_network_parameters(
+    model: nn.Module,
+    lr: float,
+    return_params: Optional[bool] = True,
+):
+    print(f"augmentation learning rate:{lr}")
+    grouped_parameters = [
+        {
+            "params": [p if return_params else n for n, p in model.named_parameters() if "augmenter" in n],
+            "weight_decay": 0.0,
+            "lr": lr,
+        },
+    ]
+
+    return grouped_parameters
+
+
 def apply_two_stages_lr(
     model: nn.Module,
     lr: float,
@@ -487,6 +504,9 @@ def apply_layerwise_lr_decay(
             if "lora_" not in name and name not in norm_param_names and "bias" not in name:
                 param.requires_grad = False
 
+        # if "augmenter" in name:
+        #     continue
+
         if not param.requires_grad:
             continue  # frozen weights
 
@@ -515,7 +535,6 @@ def apply_layerwise_lr_decay(
 
         parameter_group_vars[group_name]["params"].append(param)
         parameter_group_names[group_name]["params"].append(name)
-
     return list(parameter_group_vars.values())
 
 

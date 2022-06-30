@@ -175,7 +175,7 @@ class MultimodalFusionMLP(nn.Module):
                     # for kl, mse loss
                     detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
 
-                    if self.aug_config.arch == "n_vae":
+                    if self.aug_config.arch == "mlp_vae":
                         new, m, v = self.augmenter(k, detached_feature)
                         regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
                         KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)

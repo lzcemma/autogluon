@@ -122,7 +122,7 @@ model:
     normalization: "layer_norm"
     data_types:
     augmenter:
-      turn_on: True
+      turn_on: False
       arch: "trans_vae"   # trans denotres for transfomer; "mlp_vae" denotes for VAE for every modality
       cross_modality: True
       z_dim: 8
