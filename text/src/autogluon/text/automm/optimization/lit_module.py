@@ -148,7 +148,6 @@ class LitModule(pl.LightningModule):
                     )
                     * weight
                 )
-        self.log("train_loss", loss, prog_bar=True)
         if "augmenter" in output.keys():
             self.log("loss/target", loss)
             reg_loss = 0
@@ -244,41 +243,50 @@ class LitModule(pl.LightningModule):
         -------
         Average loss of the mini-batch data.
         """
+        # output, loss = self._shared_step(batch)
+        # self.log("train_loss", loss)
+        # return loss
         if self.hparams.aug_turn_on:
             target_optimizer, aug_optimizer = self.optimizers()
         else:
             target_optimizer = self.optimizers()
         target_opt_scheduler = self.lr_schedulers()
 
-        target_optimizer.zero_grad()
-        if self.hparams.aug_turn_on:
-            aug_optimizer.zero_grad()
+        # target_optimizer.zero_grad()
+        # if self.hparams.aug_turn_on:
+        #     aug_optimizer.zero_grad()
 
         output, loss = self._shared_step(batch)
 
         self.manual_backward(loss)
 
-        nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        # for name, param in self.model.named_parameters():
+        #     if param.grad is not None:
+        #         if name == "head.weight":
+        #             print(name)
+        #             print(param.grad)
+        # exit()
 
-        target_optimizer.step()
-        target_opt_scheduler.step()
-        if self.hparams.aug_turn_on:
-            aug_optimizer.step()
+        #nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+        # target_optimizer.step()
+        # target_opt_scheduler.step()
+        # if self.hparams.aug_turn_on:
+        #     aug_optimizer.step()
 
 
-        # # gradient accumulation
-        # if (batch_idx + 1) % self.hparams.grad_steps == 0:
-        #     print(batch_idx)
-        #     nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        # gradient accumulation
+        if (batch_idx + 1) % self.hparams.grad_steps == 0:
+            #nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-        #     target_optimizer.step()
-        #     target_opt_scheduler.step()
-        #     if self.hparams.aug_turn_on:
-        #         aug_optimizer.step()
+            target_optimizer.step()
+            target_opt_scheduler.step()
+            if self.hparams.aug_turn_on:
+                aug_optimizer.step()
 
-        #     target_optimizer.zero_grad()
-        #     if self.hparams.aug_turn_on:
-        #         aug_optimizer.zero_grad()
+            target_optimizer.zero_grad()
+            if self.hparams.aug_turn_on:
+                aug_optimizer.zero_grad()
         #     # for name, param in self.model.named_parameters():
         #     #     # print(name)
         #     #     if name == "head.weight":
@@ -324,6 +332,14 @@ class LitModule(pl.LightningModule):
             on_step=False,
             on_epoch=True,
         )
+    # def on_before_optimizer_step(self, optimizer, optimizer_idx):
+    #     for name, param in self.model.named_parameters():
+
+    #         if param.grad is not None:
+    #             if name == "head.weight":
+    #                 print(name)
+    #                 print(param.grad)
+    #     exit()
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         """
@@ -396,13 +412,13 @@ class LitModule(pl.LightningModule):
             max_steps = (
                 len(self.trainer.datamodule.train_dataloader())
                 * self.trainer.max_epochs
-                // self.trainer.accumulate_grad_batches
+                // self.hparams.grad_steps
             )
             logger.debug(
                 f"len(trainer.datamodule.train_dataloader()): {len(self.trainer.datamodule.train_dataloader())}"
             )
             logger.debug(f"trainer.max_epochs: {self.trainer.max_epochs}")
-            logger.debug(f"trainer.accumulate_grad_batches: {self.trainer.accumulate_grad_batches}")
+            logger.debug(f"trainer.accumulate_grad_batches: {self.hparams.grad_steps}")
         else:
             max_steps = self.trainer.max_steps
 
