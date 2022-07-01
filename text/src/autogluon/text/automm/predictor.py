@@ -884,6 +884,7 @@ class AutoMMPredictor:
             lr_mult=config.optimization.lr_mult,
             weight_decay=config.optimization.weight_decay,
             warmup_steps=config.optimization.warmup_steps,
+            aug_optimizer=config.optimization.aug_optimizer,
             aug_turn_on=config.optimization.aug_turn_on,
             aug_lr=config.optimization.aug_learning_rate,
             aug_optim_type=config.optimization.aug_optim_type,

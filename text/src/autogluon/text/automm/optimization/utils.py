@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, Union, Tuple, List, Dict
 import functools
+from xmlrpc.client import Boolean
 import torch
 from torch import nn
 from torch import optim
@@ -452,6 +453,7 @@ def apply_layerwise_lr_decay(
     lr_decay: float,
     weight_decay: float,
     efficient_finetune: Optional[str] = None,
+    seperate_augment_optimizer: Optional[Boolean] = False,
 ):
     """
     Assign monotonically decreasing learning rates for layers from the output end to the input end.
@@ -504,8 +506,8 @@ def apply_layerwise_lr_decay(
             if "lora_" not in name and name not in norm_param_names and "bias" not in name:
                 param.requires_grad = False
 
-        # if "augmenter" in name:
-        #     continue
+        if seperate_augment_optimizer and "augmenter" in name:
+            continue
 
         if not param.requires_grad:
             continue  # frozen weights

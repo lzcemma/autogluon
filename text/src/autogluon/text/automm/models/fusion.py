@@ -163,82 +163,50 @@ class MultimodalFusionMLP(nn.Module):
             per_output = per_model(batch)
             multimodal_output[per_model.prefix] = per_output
 
-        # pass through vae augmentation network before adapter
-        aug_loss = None
-        if self.augmenter is not None:
-            if self.pre_adapter and is_training:
+        if self.aug_config.keep_original:
 
-                aug_loss = {}
+            aug_loss = None
+            if self.augmenter is not None:
+                if self.pre_adapter and is_training:
+                    aug_loss = {}
+                    for per_model in self.model:
+                        k = per_model.prefix
 
-                for per_model in self.model:
-                    k = per_model.prefix
-                    # for kl, mse loss
-                    detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
+                        detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
 
-                    if self.aug_config.arch == "mlp_vae":
-                        new, m, v = self.augmenter(k, detached_feature)
-                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                        KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
-                        aug_loss.update(
-                            {
-                                k: {
-                                    "regularizer": regularize_loss,
-                                    "KLD_loss": KLD_loss,
-                                    "reg_weight": self.aug_config.regularizer_loss_weight,
-                                    "kl_weight": self.aug_config.kl_loss_weight,
+                        if self.aug_config.arch == "mlp_vae":
+                            new, m, v = self.augmenter(k, detached_feature)
+                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                            KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
+                            aug_loss.update(
+                                {
+                                    k: {
+                                        "regularizer": regularize_loss,
+                                        "KLD_loss": KLD_loss,
+                                        "reg_weight": self.aug_config.regularizer_loss_weight,
+                                        "kl_weight": self.aug_config.kl_loss_weight,
+                                    }
                                 }
-                            }
-                        )
-                    elif self.aug_config.arch == "trans":
-                        new = self.augmenter(k, detached_feature)
-                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                        aug_loss.update(
-                            {
-                                k: {
-                                    "regularizer": regularize_loss,
-                                    "reg_weight": self.aug_config.regularizer_loss_weight,
+                            )
+                        elif self.aug_config.arch == "trans":
+                            new = self.augmenter(k, detached_feature)
+                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                            aug_loss.update(
+                                {
+                                    k: {
+                                        "regularizer": regularize_loss,
+                                        "reg_weight": self.aug_config.regularizer_loss_weight,
+                                    }
                                 }
-                            }
-                        )
+                            )
 
-                    # augment to pass in fusion
-                    if self.aug_config.original_ratio > 0.0:
-                        orignal_multimodal_features, for_augment_multimodal_features = torch.split(
-                            multimodal_output[k][k][FEATURES],
-                            int(self.aug_config.original_ratio * len(multimodal_output[k][k][FEATURES])),
-                        )
-                        orignal_logit, after_augment_logit = torch.split(
-                            multimodal_output[k][k][LOGITS],
-                            int(self.aug_config.original_ratio * len(multimodal_output[k][k][FEATURES])),
-                        )
-                    else:
-                        orignal_multimodal_features, for_augment_multimodal_features = (
-                            None,
-                            multimodal_output[k][k][FEATURES],
-                        )
-                        orignal_logit, after_augment_logit = (
-                            None,
-                            multimodal_output[k][k][LOGITS],
-                        )
+                        after_augment_logit = per_model.head(new)
+                        new.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
-                    for_augment_multimodal_features.register_hook(
-                        lambda grad: -grad * (1 / self.aug_config.adv_weight)
-                    )
-                    if self.aug_config.arch == "n_vae":
-                        for_augment_multimodal_features, _, _ = self.augmenter(k, for_augment_multimodal_features)
-                    elif self.aug_config.arch == "trans":
-                        for_augment_multimodal_features = self.augmenter(k, for_augment_multimodal_features)
-                    after_augment_logit = per_model.head(for_augment_multimodal_features)
-                    for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
-
-                    if orignal_multimodal_features is not None:
-                        multimodal_output[k][k][FEATURES] = torch.cat(
-                            [orignal_multimodal_features, for_augment_multimodal_features], dim=0
-                        )
-                        multimodal_output[k][k][LOGITS] = torch.cat([orignal_logit, after_augment_logit], dim=0)
-                    else:
-                        multimodal_output[k][k][FEATURES] = for_augment_multimodal_features
-                        multimodal_output[k][k][LOGITS] = after_augment_logit
+                        multimodal_output[k][k][FEATURES] = torch.cat([multimodal_output[k][k][FEATURES], new], dim=0)
+                        # multimodal_output[k][k][LOGITS] = torch.cat(
+                        #     [multimodal_output[k][k][LOGITS], after_augment_logit], dim=0
+                        # )
 
                     # # to pass in fusion
                     # multimodal_output[k][k][FEATURES].register_hook(
@@ -251,88 +219,245 @@ class MultimodalFusionMLP(nn.Module):
                     # multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
                     # multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
-        multimodal_features = []
-        output = {}
-        for per_model, per_adapter in zip(self.model, self.adapter):
-            multimodal_features.append(per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES]))
-            if self.loss_weight is not None:
-                multimodal_output[per_model.prefix][per_model.prefix].update({WEIGHT: self.loss_weight})
-                output.update(multimodal_output[per_model.prefix])
-        multimodal_features = torch.cat(multimodal_features, dim=1)
+            multimodal_features = []
+            output = {}
+            for per_model, per_adapter in zip(self.model, self.adapter):
+                multimodal_features.append(
+                    per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES])
+                )
+                if self.loss_weight is not None:
+                    multimodal_output[per_model.prefix][per_model.prefix].update({WEIGHT: self.loss_weight})
+                    output.update(multimodal_output[per_model.prefix])
+            multimodal_features = torch.cat(multimodal_features, dim=1)
 
-        # pass through augmentation network after adapter
-        if self.augmenter is not None:
-            if is_training and self.pre_adapter is False:
+            # pass through augmentation network after adapter
+            if self.augmenter is not None:
+                if is_training and self.pre_adapter is False:
 
-                # train augment network
-                aug_loss = {}
-                detached_feature = multimodal_features.detach().clone()
-                if self.aug_config.arch == "trans_vae":
-                    new, m, v = self.augmenter(None, detached_feature)
-                    regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                    KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
-                    aug_loss.update(
-                        {
-                            "transformer_augnet": {
-                                "regularizer": regularize_loss,
-                                "KLD_loss": KLD_loss,
-                                "reg_weight": self.aug_config.regularizer_loss_weight,
-                                "kl_weight": self.aug_config.kl_loss_weight,
+                    # train augment network
+                    aug_loss = {}
+                    detached_feature = multimodal_features.detach().clone()
+                    if self.aug_config.arch == "trans_vae":
+                        new, m, v = self.augmenter(None, detached_feature)
+                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                        KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
+                        aug_loss.update(
+                            {
+                                "transformer_augnet": {
+                                    "regularizer": regularize_loss,
+                                    "KLD_loss": KLD_loss,
+                                    "reg_weight": self.aug_config.regularizer_loss_weight,
+                                    "kl_weight": self.aug_config.kl_loss_weight,
+                                }
                             }
-                        }
-                    )
+                        )
 
-                elif self.aug_config.arch == "trans":
-                    x_new = self.augmenter(None, detached_feature)
-                    regularize_loss = self.augmenter.l2_regularize(detached_feature, x_new)
+                    elif self.aug_config.arch == "trans":
+                        new = self.augmenter(None, detached_feature)
+                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
 
-                    aug_loss.update(
-                        {
-                            "transformer_augnet": {
-                                "regularizer": regularize_loss,
-                                "reg_weight": self.aug_config.regularizer_loss_weight,
+                        aug_loss.update(
+                            {
+                                "transformer_augnet": {
+                                    "regularizer": regularize_loss,
+                                    "reg_weight": self.aug_config.regularizer_loss_weight,
+                                }
                             }
-                        }
-                    )
+                        )
 
-                # augment to pass in fusion
-                if self.aug_config.original_ratio > 0.0:
-                    orignal_multimodal_features, for_augment_multimodal_features = torch.split(
-                        multimodal_features, int(self.aug_config.original_ratio * len(multimodal_features))
-                    )
-                else:
-                    orignal_multimodal_features, for_augment_multimodal_features = None, multimodal_features
+                    new.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
+                    multimodal_features = torch.cat([multimodal_features, new], dim=0)
 
-                for_augment_multimodal_features.register_hook(lambda grad: -grad * (1 / self.aug_config.adv_weight))
-                if self.aug_config.arch == "trans_vae":
-                    for_augment_multimodal_features, _, _ = self.augmenter(None, for_augment_multimodal_features)
-                elif self.aug_config.arch == "trans":
-                    for_augment_multimodal_features = self.augmenter(None, for_augment_multimodal_features)
-                for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
-
-                if orignal_multimodal_features is not None:
-                    multimodal_features = torch.cat(
-                        [orignal_multimodal_features, for_augment_multimodal_features], dim=0
-                    )
-                else:
-                    multimodal_features = for_augment_multimodal_features
-
-        features = self.fusion_mlp(multimodal_features)
-        logits = self.head(features)
-        fusion_output = {
-            self.prefix: {
-                LOGITS: logits,
-                FEATURES: features,
+            features = self.fusion_mlp(multimodal_features)
+            logits = self.head(features)
+            fusion_output = {
+                self.prefix: {
+                    LOGITS: logits,
+                    FEATURES: features,
+                }
             }
-        }
-        if self.loss_weight is not None:
-            fusion_output[self.prefix].update({WEIGHT: 1})
-            output.update(fusion_output)
-        else:
-            output = fusion_output
+            if self.loss_weight is not None:
+                fusion_output[self.prefix].update({WEIGHT: 1})
+                output.update(fusion_output)
+            else:
+                output = fusion_output
 
-        if aug_loss is not None:
-            output.update({"augmenter": aug_loss})
+            if aug_loss is not None:
+                output.update({"augmenter": aug_loss})
+
+        else:
+            aug_loss = None
+            if self.augmenter is not None:
+                if self.pre_adapter and is_training:
+
+                    aug_loss = {}
+                    for per_model in self.model:
+                        k = per_model.prefix
+                        # for kl, mse loss
+                        detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
+
+                        if self.aug_config.arch == "mlp_vae":
+                            new, m, v = self.augmenter(k, detached_feature)
+                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                            KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
+                            aug_loss.update(
+                                {
+                                    k: {
+                                        "regularizer": regularize_loss,
+                                        "KLD_loss": KLD_loss,
+                                        "reg_weight": self.aug_config.regularizer_loss_weight,
+                                        "kl_weight": self.aug_config.kl_loss_weight,
+                                    }
+                                }
+                            )
+                        elif self.aug_config.arch == "trans":
+                            new = self.augmenter(k, detached_feature)
+                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                            aug_loss.update(
+                                {
+                                    k: {
+                                        "regularizer": regularize_loss,
+                                        "reg_weight": self.aug_config.regularizer_loss_weight,
+                                    }
+                                }
+                            )
+
+                        # augment to pass in fusion
+                        if self.aug_config.original_ratio > 0.0:
+                            orignal_multimodal_features, for_augment_multimodal_features = torch.split(
+                                multimodal_output[k][k][FEATURES],
+                                int(self.aug_config.original_ratio * len(multimodal_output[k][k][FEATURES])),
+                            )
+                            orignal_logit, after_augment_logit = torch.split(
+                                multimodal_output[k][k][LOGITS],
+                                int(self.aug_config.original_ratio * len(multimodal_output[k][k][FEATURES])),
+                            )
+                        else:
+                            orignal_multimodal_features, for_augment_multimodal_features = (
+                                None,
+                                multimodal_output[k][k][FEATURES],
+                            )
+                            orignal_logit, after_augment_logit = (
+                                None,
+                                multimodal_output[k][k][LOGITS],
+                            )
+
+                        for_augment_multimodal_features.register_hook(
+                            lambda grad: -grad * (1 / self.aug_config.adv_weight)
+                        )
+                        if self.aug_config.arch == "n_vae":
+                            for_augment_multimodal_features, _, _ = self.augmenter(k, for_augment_multimodal_features)
+                        elif self.aug_config.arch == "trans":
+                            for_augment_multimodal_features = self.augmenter(k, for_augment_multimodal_features)
+                        after_augment_logit = per_model.head(for_augment_multimodal_features)
+                        for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
+
+                        if orignal_multimodal_features is not None:
+                            multimodal_output[k][k][FEATURES] = torch.cat(
+                                [orignal_multimodal_features, for_augment_multimodal_features], dim=0
+                            )
+                            multimodal_output[k][k][LOGITS] = torch.cat([orignal_logit, after_augment_logit], dim=0)
+                        else:
+                            multimodal_output[k][k][FEATURES] = for_augment_multimodal_features
+                            multimodal_output[k][k][LOGITS] = after_augment_logit
+
+                        # # to pass in fusion
+                        # multimodal_output[k][k][FEATURES].register_hook(
+                        #     lambda grad: -grad * (1 / self.aug_config.adv_weight)
+                        # )
+                        # if self.aug_config.arch == "n_vae":
+                        #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
+                        # elif self.aug_config == "trans":
+                        #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
+                        # multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
+                        # multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * self.aug_config.adv_weight)
+
+            multimodal_features = []
+            output = {}
+            for per_model, per_adapter in zip(self.model, self.adapter):
+                multimodal_features.append(
+                    per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES])
+                )
+                if self.loss_weight is not None:
+                    multimodal_output[per_model.prefix][per_model.prefix].update({WEIGHT: self.loss_weight})
+                    output.update(multimodal_output[per_model.prefix])
+            multimodal_features = torch.cat(multimodal_features, dim=1)
+
+            # pass through augmentation network after adapter
+            if self.augmenter is not None:
+                if is_training and self.pre_adapter is False:
+
+                    # train augment network
+                    aug_loss = {}
+                    detached_feature = multimodal_features.detach().clone()
+                    if self.aug_config.arch == "trans_vae":
+                        new, m, v = self.augmenter(None, detached_feature)
+                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
+                        KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
+                        aug_loss.update(
+                            {
+                                "transformer_augnet": {
+                                    "regularizer": regularize_loss,
+                                    "KLD_loss": KLD_loss,
+                                    "reg_weight": self.aug_config.regularizer_loss_weight,
+                                    "kl_weight": self.aug_config.kl_loss_weight,
+                                }
+                            }
+                        )
+
+                    elif self.aug_config.arch == "trans":
+                        x_new = self.augmenter(None, detached_feature)
+                        regularize_loss = self.augmenter.l2_regularize(detached_feature, x_new)
+
+                        aug_loss.update(
+                            {
+                                "transformer_augnet": {
+                                    "regularizer": regularize_loss,
+                                    "reg_weight": self.aug_config.regularizer_loss_weight,
+                                }
+                            }
+                        )
+
+                    # augment to pass in fusion
+                    if self.aug_config.original_ratio > 0.0:
+                        orignal_multimodal_features, for_augment_multimodal_features = torch.split(
+                            multimodal_features, int(self.aug_config.original_ratio * len(multimodal_features))
+                        )
+                    else:
+                        orignal_multimodal_features, for_augment_multimodal_features = None, multimodal_features
+
+                    for_augment_multimodal_features.register_hook(
+                        lambda grad: -grad * (1 / self.aug_config.adv_weight)
+                    )
+                    if self.aug_config.arch == "trans_vae":
+                        for_augment_multimodal_features, _, _ = self.augmenter(None, for_augment_multimodal_features)
+                    elif self.aug_config.arch == "trans":
+                        for_augment_multimodal_features = self.augmenter(None, for_augment_multimodal_features)
+                    for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
+
+                    if orignal_multimodal_features is not None:
+                        multimodal_features = torch.cat(
+                            [orignal_multimodal_features, for_augment_multimodal_features], dim=0
+                        )
+                    else:
+                        multimodal_features = for_augment_multimodal_features
+
+            features = self.fusion_mlp(multimodal_features)
+            logits = self.head(features)
+            fusion_output = {
+                self.prefix: {
+                    LOGITS: logits,
+                    FEATURES: features,
+                }
+            }
+            if self.loss_weight is not None:
+                fusion_output[self.prefix].update({WEIGHT: 1})
+                output.update(fusion_output)
+            else:
+                output = fusion_output
+
+            if aug_loss is not None:
+                output.update({"augmenter": aug_loss})
 
         return output
 

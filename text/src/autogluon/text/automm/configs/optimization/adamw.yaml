@@ -1,6 +1,7 @@
 optimization:
   optim_type: "adamw"
   learning_rate: 1.0e-4
+  aug_optimizer: False
   aug_turn_on: False
   aug_learning_rate: 1.0e-4
   aug_optim_type: "adam"

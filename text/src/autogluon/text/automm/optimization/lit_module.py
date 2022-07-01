@@ -49,6 +49,7 @@ class LitModule(pl.LightningModule):
         efficient_finetune: Optional[str] = None,
         mixup_fn: Optional[MixupModule] = None,
         mixup_off_epoch: Optional[int] = 0,
+        aug_optimizer: Optional[Boolean] = False,
         aug_turn_on: Optional[Boolean] = False,
         aug_lr: Optional[float] = None,
         aug_optim_type: Optional[str] = None,
@@ -129,25 +130,46 @@ class LitModule(pl.LightningModule):
                 "which must be used with a customized metric function."
             )
         self.custom_metric_func = custom_metric_func
-        self.automatic_optimization = False
+        if aug_optimizer:
+            self.automatic_optimization = False
 
     def _compute_loss(
         self,
         output: Dict,
         label: torch.Tensor,
-    ):  
+    ):
 
         loss = 0
         for name, per_output in output.items():
             if name != "augmenter":
                 weight = per_output[WEIGHT] if WEIGHT in per_output else 1
-                loss += (
-                    self.loss_func(
-                        input=per_output[LOGITS].squeeze(dim=1),
-                        target=label,
+
+                if name.startswith("fusion") and self.model.training and self.model.aug_config.turn_on:
+                    if self.model.pre_adapter is False and self.model.aug_config.keep_original:
+                        loss += (
+                            self.loss_func(
+                                input=per_output[LOGITS].squeeze(dim=1),
+                                target=label.tile((2,)),
+                            )
+                            * weight
+                        )
+                    else:
+
+                        loss += (
+                            self.loss_func(
+                                input=per_output[LOGITS].squeeze(dim=1),
+                                target=label,
+                            )
+                            * weight
+                        )
+                else:
+                    loss += (
+                        self.loss_func(
+                            input=per_output[LOGITS].squeeze(dim=1),
+                            target=label,
+                        )
+                        * weight
                     )
-                    * weight
-                )
         if "augmenter" in output.keys():
             self.log("loss/target", loss)
             reg_loss = 0
@@ -165,7 +187,6 @@ class LitModule(pl.LightningModule):
                     )
                 self.log("loss/kl_loss", kl_loss)
                 self.log("loss/reg_loss", reg_loss)
-                # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
                 loss = loss + reg_loss + kl_loss
             else:
                 for _, l in output["augmenter"].items():
@@ -179,21 +200,6 @@ class LitModule(pl.LightningModule):
                 # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
                 loss = loss + reg_loss + kl_loss
         return loss
-
-    # def on_before_optimizer_step(self, optimizer, optimizer_idx):
-    #     # for name, param in self.model.named_parameters():
-    #     #     # print(name)
-    #     #     if name == "head.weight":
-    #     #         print(name)
-    #     #         print(param.grad)
-    #     #     if name == "augmenter.augnets.hf_text.encoder.0.norm.weight":
-    #     #         print(name)
-    #     #         print(param.grad)
-    #     #     if name == "model.0.model.encoder.layer.11.output.LayerNorm.weight":
-    #     #         print(name)
-    #     #         print(param.grad)
-
-    #     return super().on_before_optimizer_step(optimizer, optimizer_idx)
 
     def _compute_metric_score(
         self,
@@ -243,61 +249,31 @@ class LitModule(pl.LightningModule):
         -------
         Average loss of the mini-batch data.
         """
-        # output, loss = self._shared_step(batch)
-        # self.log("train_loss", loss)
-        # return loss
-        if self.hparams.aug_turn_on:
-            target_optimizer, aug_optimizer = self.optimizers()
+        if self.hparams.aug_optimizer:
+            if self.hparams.aug_turn_on:
+                target_optimizer, aug_optimizer = self.optimizers()
+            else:
+                target_optimizer = self.optimizers()
+            target_opt_scheduler = self.lr_schedulers()
+
+            output, loss = self._shared_step(batch)
+            self.manual_backward(loss)
+
+            # gradient accumulation
+            if (batch_idx + 1) % self.hparams.grad_steps == 0 or self.trainer.is_last_batch:
+                nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                target_optimizer.step()
+                target_opt_scheduler.step()
+                if self.hparams.aug_turn_on:
+                    aug_optimizer.step()
+
+                target_optimizer.zero_grad()
+                if self.hparams.aug_turn_on:
+                    aug_optimizer.zero_grad()
         else:
-            target_optimizer = self.optimizers()
-        target_opt_scheduler = self.lr_schedulers()
-
-        # target_optimizer.zero_grad()
-        # if self.hparams.aug_turn_on:
-        #     aug_optimizer.zero_grad()
-
-        output, loss = self._shared_step(batch)
-
-        self.manual_backward(loss)
-
-        # for name, param in self.model.named_parameters():
-        #     if param.grad is not None:
-        #         if name == "head.weight":
-        #             print(name)
-        #             print(param.grad)
-        # exit()
-
-        #nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-        # target_optimizer.step()
-        # target_opt_scheduler.step()
-        # if self.hparams.aug_turn_on:
-        #     aug_optimizer.step()
-
-
-        # gradient accumulation
-        if (batch_idx + 1) % self.hparams.grad_steps == 0:
-            #nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-
-            target_optimizer.step()
-            target_opt_scheduler.step()
-            if self.hparams.aug_turn_on:
-                aug_optimizer.step()
-
-            target_optimizer.zero_grad()
-            if self.hparams.aug_turn_on:
-                aug_optimizer.zero_grad()
-        #     # for name, param in self.model.named_parameters():
-        #     #     # print(name)
-        #     #     if name == "head.weight":
-        #     #         print(name)
-        #     #         print(param)
-        #     #         print(param.grad)
-
-        #     # exit()
-        #     target_optimizer.zero_grad()
-        #     if self.hparams.aug_turn_on:
-        #         aug_optimizer.zero_grad()
+            output, loss = self._shared_step(batch)
+            self.log("train_loss", loss)
 
         return loss
 
@@ -332,14 +308,6 @@ class LitModule(pl.LightningModule):
             on_step=False,
             on_epoch=True,
         )
-    # def on_before_optimizer_step(self, optimizer, optimizer_idx):
-    #     for name, param in self.model.named_parameters():
-
-    #         if param.grad is not None:
-    #             if name == "head.weight":
-    #                 print(name)
-    #                 print(param.grad)
-    #     exit()
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         """
@@ -392,6 +360,7 @@ class LitModule(pl.LightningModule):
             grouped_parameters = apply_layerwise_lr_decay(
                 lr_decay=self.hparams.lr_decay,
                 efficient_finetune=self.hparams.efficient_finetune,
+                seperate_augment_optimizer=self.hparams.aug_optimizer,
                 **kwargs,
             )
         else:
@@ -410,9 +379,7 @@ class LitModule(pl.LightningModule):
         logger.debug(f"trainer.max_steps: {self.trainer.max_steps}")
         if self.trainer.max_steps is None or -1:
             max_steps = (
-                len(self.trainer.datamodule.train_dataloader())
-                * self.trainer.max_epochs
-                // self.hparams.grad_steps
+                len(self.trainer.datamodule.train_dataloader()) * self.trainer.max_epochs // self.hparams.grad_steps
             )
             logger.debug(
                 f"len(trainer.datamodule.train_dataloader()): {len(self.trainer.datamodule.train_dataloader())}"
@@ -441,7 +408,7 @@ class LitModule(pl.LightningModule):
         sched = {"scheduler": scheduler, "interval": "step"}
 
         aug_optimizer = None
-        if self.hparams.aug_turn_on:
+        if self.hparams.aug_optimizer and self.hparams.aug_turn_on:
             # augment network optimizer
             aug_grouped_parameters = get_augment_network_parameters(self.model, self.hparams.aug_lr)
             aug_optimizer = get_optimizer(
