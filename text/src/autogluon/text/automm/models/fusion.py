@@ -173,9 +173,9 @@ class MultimodalFusionMLP(nn.Module):
                         k = per_model.prefix
 
                         detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
-
-                        if self.aug_config.arch == "mlp_vae":
+                        if self.aug_config.arch == "mlp_vae" or self.aug_config.arch == "trans_vae":
                             new, m, v = self.augmenter(k, detached_feature)
+
                             regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
                             KLD_loss = self.augmenter.kld(m, v) / new.size(0) / new.size(1)
                             aug_loss.update(
@@ -188,22 +188,16 @@ class MultimodalFusionMLP(nn.Module):
                                     }
                                 }
                             )
-                        elif self.aug_config.arch == "trans":
-                            new = self.augmenter(k, detached_feature)
-                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                            aug_loss.update(
-                                {
-                                    k: {
-                                        "regularizer": regularize_loss,
-                                        "reg_weight": self.aug_config.regularizer_loss_weight,
-                                    }
-                                }
-                            )
 
-                        after_augment_logit = per_model.head(new)
-                        new.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
+                            after_augment = new.clone()
+                            # to_augment = multimodal_features.detach().clone()
+                            # after_augment, _, _ = self.augmenter(None, to_augment)
+                        after_augment_logit = per_model.head(after_augment)
+                        after_augment.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
+                        multimodal_output[k][k][FEATURES] = torch.cat(
+                            [multimodal_output[k][k][FEATURES], after_augment], dim=0
+                        )
 
-                        multimodal_output[k][k][FEATURES] = torch.cat([multimodal_output[k][k][FEATURES], new], dim=0)
                         # multimodal_output[k][k][LOGITS] = torch.cat(
                         #     [multimodal_output[k][k][LOGITS], after_augment_logit], dim=0
                         # )
@@ -252,21 +246,11 @@ class MultimodalFusionMLP(nn.Module):
                             }
                         )
 
-                    elif self.aug_config.arch == "trans":
-                        new = self.augmenter(None, detached_feature)
-                        regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-
-                        aug_loss.update(
-                            {
-                                "transformer_augnet": {
-                                    "regularizer": regularize_loss,
-                                    "reg_weight": self.aug_config.regularizer_loss_weight,
-                                }
-                            }
-                        )
-
-                    new.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
-                    multimodal_features = torch.cat([multimodal_features, new], dim=0)
+                        # to_augment = multimodal_features.detach().clone()
+                        # after_augment, _, _ = self.augmenter(None, to_augment)
+                        after_augment = new.clone()
+                    after_augment.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
+                    multimodal_features = torch.cat([multimodal_features, after_augment], dim=0)
 
             features = self.fusion_mlp(multimodal_features)
             logits = self.head(features)
@@ -401,19 +385,6 @@ class MultimodalFusionMLP(nn.Module):
                                     "KLD_loss": KLD_loss,
                                     "reg_weight": self.aug_config.regularizer_loss_weight,
                                     "kl_weight": self.aug_config.kl_loss_weight,
-                                }
-                            }
-                        )
-
-                    elif self.aug_config.arch == "trans":
-                        x_new = self.augmenter(None, detached_feature)
-                        regularize_loss = self.augmenter.l2_regularize(detached_feature, x_new)
-
-                        aug_loss.update(
-                            {
-                                "transformer_augnet": {
-                                    "regularizer": regularize_loss,
-                                    "reg_weight": self.aug_config.regularizer_loss_weight,
                                 }
                             }
                         )

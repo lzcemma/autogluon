@@ -134,7 +134,7 @@ model:
       regularizer_loss_weight: 0.5
       adv_weight: 0.0005
       original_ratio: 0.5
-      keep_original: False
+      keep_original: True
   fusion_transformer:
     hidden_size: 192
     n_blocks: 3
