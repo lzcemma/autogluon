@@ -990,24 +990,48 @@ class AutoMMPredictor:
         blacklist_msgs = ["already configured with model summary"]
         log_filter = LogFilter(blacklist_msgs)
         with apply_log_filter(log_filter):
-            trainer = pl.Trainer(
-                gpus=num_gpus if not hpo_mode else None,  # ray lightning requires not specifying gpus
-                auto_select_gpus=config.env.auto_select_gpus if num_gpus != 0 else False,
-                num_nodes=config.env.num_nodes,
-                precision=precision,
-                strategy=strategy,
-                benchmark=False,
-                deterministic=config.env.deterministic,
-                max_epochs=config.optimization.max_epochs,
-                max_steps=config.optimization.max_steps,
-                max_time=max_time,
-                callbacks=callbacks,
-                logger=tb_logger,
-                log_every_n_steps=10,
-                enable_progress_bar=enable_progress_bar,
-                fast_dev_run=config.env.fast_dev_run,
-                val_check_interval=config.optimization.val_check_interval,
-            )
+            if config.optimization.aug_optimizer:
+                trainer = pl.Trainer(
+                    gpus=num_gpus if not hpo_mode else None,  # ray lightning requires not specifying gpus
+                    auto_select_gpus=config.env.auto_select_gpus if num_gpus != 0 else False,
+                    num_nodes=config.env.num_nodes,
+                    precision=precision,
+                    strategy=strategy,
+                    benchmark=False,
+                    deterministic=config.env.deterministic,
+                    max_epochs=config.optimization.max_epochs,
+                    max_steps=config.optimization.max_steps,
+                    max_time=max_time,
+                    callbacks=callbacks,
+                    logger=tb_logger,
+                    log_every_n_steps=10,
+                    enable_progress_bar=enable_progress_bar,
+                    fast_dev_run=config.env.fast_dev_run,
+                    val_check_interval=config.optimization.val_check_interval,
+                )
+
+            else:
+                trainer = pl.Trainer(
+                    gpus=num_gpus if not hpo_mode else None,  # ray lightning requires not specifying gpus
+                    auto_select_gpus=config.env.auto_select_gpus if num_gpus != 0 else False,
+                    num_nodes=config.env.num_nodes,
+                    precision=precision,
+                    strategy=strategy,
+                    benchmark=False,
+                    deterministic=config.env.deterministic,
+                    max_epochs=config.optimization.max_epochs,
+                    max_steps=config.optimization.max_steps,
+                    max_time=max_time,
+                    callbacks=callbacks,
+                    logger=tb_logger,
+                    log_every_n_steps=10,
+                    enable_progress_bar=enable_progress_bar,
+                    fast_dev_run=config.env.fast_dev_run,
+                    val_check_interval=config.optimization.val_check_interval,
+                    gradient_clip_val=1,
+                    gradient_clip_algorithm="norm",
+                    accumulate_grad_batches=grad_steps,
+                )
 
         with warnings.catch_warnings():
             warnings.filterwarnings(

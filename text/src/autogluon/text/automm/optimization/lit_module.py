@@ -1,5 +1,6 @@
 import logging
 from xmlrpc.client import Boolean
+from fastprogress import progress_bar
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -258,6 +259,7 @@ class LitModule(pl.LightningModule):
 
             output, loss = self._shared_step(batch)
             self.manual_backward(loss)
+            self.log("train_loss", loss, prog_bar=True)
 
             # gradient accumulation
             if (batch_idx + 1) % self.hparams.grad_steps == 0 or self.trainer.is_last_batch:
@@ -394,7 +396,7 @@ class LitModule(pl.LightningModule):
         warmup_steps = self.hparams.warmup_steps
         if isinstance(warmup_steps, float):
             warmup_steps = int(max_steps * warmup_steps)
-
+        print(f"warmup steps: {warmup_steps}")
         logger.debug(f"warmup steps: {warmup_steps}")
         logger.debug(f"lr_schedule: {self.hparams.lr_schedule}")
         scheduler = get_lr_scheduler(
@@ -409,6 +411,7 @@ class LitModule(pl.LightningModule):
 
         aug_optimizer = None
         if self.hparams.aug_optimizer and self.hparams.aug_turn_on:
+            print("initilize augment optimizer")
             # augment network optimizer
             aug_grouped_parameters = get_augment_network_parameters(self.model, self.hparams.aug_lr)
             aug_optimizer = get_optimizer(
