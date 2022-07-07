@@ -36,6 +36,12 @@ class VAETransformer(nn.Module):
         self.transformer_decoder = TransformerEncoder(decoder_layers, config.n_layer)
 
         self.last_layer = nn.Linear(self.emb_d, self.emb_d)
+
+        if self.config.gating == "sigmoid":
+            self.gating = nn.Sigmoid()
+        else:
+            self.gating = nn.Identity()
+        print(self.gating)
         self.init_parameters()
 
     def init_parameters(self):
@@ -63,7 +69,7 @@ class VAETransformer(nn.Module):
 
         hidden = self.decoder_fc(z)
 
-        noise = self.last_layer(self.transformer_decoder(hidden)[:, : self.n_modality, :])
+        noise = self.gating(self.last_layer(self.transformer_decoder(hidden)[:, : self.n_modality, :]))
         recon_x = X.reshape(-1, self.n_modality, self.emb_d) + noise
 
         return recon_x.reshape(len(X), -1), z_mu, z_logvar

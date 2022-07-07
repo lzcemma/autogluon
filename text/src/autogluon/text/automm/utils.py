@@ -614,6 +614,7 @@ def init_data_processors(
 def create_model(
     config: DictConfig,
     num_classes: int,
+    num_image_columns: Optional[int] = None,
     num_numerical_columns: Optional[int] = None,
     num_categories: Optional[List[int]] = None,
     pretrained: Optional[bool] = True,
@@ -662,6 +663,7 @@ def create_model(
                 num_classes=num_classes,
                 mix_choice=model_config.mix_choice,
                 pretrained=pretrained,
+                num_image_columns=num_image_columns,
             )
         elif model_name.lower().startswith(HF_TEXT):
             model = HFAutoModelForTextPrediction(

@@ -36,6 +36,7 @@ class TimmAutoModelForImagePrediction(nn.Module):
         num_classes: Optional[int] = 0,
         mix_choice: Optional[str] = "all_logits",
         pretrained: Optional[bool] = True,
+        num_image_columns: Optional[int] = 1,
     ):
         """
         Load a pretrained image backbone from TIMM.
@@ -74,6 +75,10 @@ class TimmAutoModelForImagePrediction(nn.Module):
 
         self.name_to_id = self.get_layer_ids()
         self.head_layer_names = [n for n, layer_id in self.name_to_id.items() if layer_id == 0]
+
+        self.num_image_columns = num_image_columns
+        if self.mix_choice == "concat":
+            self.out_features = self.out_features * self.num_image_columns
 
     @property
     def image_key(self):
@@ -140,7 +145,27 @@ class TimmAutoModelForImagePrediction(nn.Module):
 
             features = features.sum(dim=1)  # (b, num_features)
             logits = logits.sum(dim=1)  # (b, num_classes)
+        elif self.mix_choice == "concat":
+            b, n, c, h, w = images.shape
+            features = self.model(images.reshape((b * n, c, h, w)))  # (b*n, num_features)
+            logits = self.head(features)
+            steps = torch.arange(0, n).type_as(image_valid_num)
+            image_masks = (steps.reshape((1, -1)) < image_valid_num.reshape((-1, 1))).type_as(logits)  # (b, n)
+            features = features.reshape((b, n, -1)) * image_masks[:, :, None]  # (b, n, num_features)
+            logits = logits.reshape((b, n, -1)) * image_masks[:, :, None]  # (b, n, num_classes)
+            # collect features by image column names
+            column_features, column_feature_masks = get_column_features(
+                batch=batch,
+                column_name_prefix=self.image_column_prefix,
+                features=features,
+                valid_lengths=image_valid_num,
+                has_cls_feature=False,
+            )
+            ret[COLUMN_FEATURES][FEATURES].update(column_features)
+            ret[COLUMN_FEATURES][MASKS].update(column_feature_masks)
 
+            features = features.reshape(b, -1)
+            logits = logits.mean(dim=1)
         else:
             raise ValueError(f"unknown mix_choice: {self.mix_choice}")
 

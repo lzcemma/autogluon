@@ -23,6 +23,18 @@ from torch.nn.modules.loss import _Loss
 logger = logging.getLogger(AUTOMM)
 
 
+def consist_loss(p_logits, q_logits, threshold):
+    p = F.softmax(p_logits, dim=1)
+    logp = F.log_softmax(p_logits, dim=1)
+    logq = F.log_softmax(q_logits, dim=1)
+    loss = torch.sum(p * (logp - logq), dim=-1)
+    q = F.softmax(q_logits, dim=1)
+    q_largest = torch.max(q, dim=1)[0]
+    loss_mask = torch.gt(q_largest, threshold).float()
+    loss = loss * loss_mask
+    return torch.mean(loss)
+
+
 class LitModule(pl.LightningModule):
     """
     Control the loops for training, evaluation, and prediction. This module is independent of
@@ -154,6 +166,14 @@ class LitModule(pl.LightningModule):
                             )
                             * weight
                         )
+                        if self.model.aug_config.consist_loss > 0.0:
+                            org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
+                            c_loss = (
+                                consist_loss(aug, org.clone().detach(), self.model.aug_config.consist_t)
+                            ) * self.model.aug_config.consist_loss
+                            loss += c_loss
+                            self.log("loss/consist", c_loss)
+
                     else:
 
                         loss += (
@@ -163,6 +183,7 @@ class LitModule(pl.LightningModule):
                             )
                             * weight
                         )
+
                 else:
                     loss += (
                         self.loss_func(

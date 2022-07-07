@@ -76,6 +76,8 @@ class MultimodalFusionMLP(nn.Module):
         self.model = nn.ModuleList(models)
 
         raw_in_features = [per_model.out_features for per_model in models]
+        print("raw_in_features", raw_in_features)
+
         if adapt_in_features is not None:
             if adapt_in_features == "min":
                 base_in_feat = min(raw_in_features)
@@ -142,6 +144,22 @@ class MultimodalFusionMLP(nn.Module):
     def label_key(self):
         return f"{self.prefix}_{LABEL}"
 
+    def collect_embedding(self, batch: dict):
+        multimodal_output = {}
+        for per_model in self.model:
+            per_output = per_model(batch)
+            multimodal_output[per_model.prefix] = per_output
+
+        if self.pre_adapter:
+            return multimodal_output
+        else:
+            multimodal_features = []
+            for per_model, per_adapter in zip(self.model, self.adapter):
+                multimodal_features.append(
+                    per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES])
+                )
+            return torch.cat(multimodal_features, dim=0)
+
     def forward(self, batch: dict, is_training: Optional[bool]):
         """
 
@@ -158,6 +176,7 @@ class MultimodalFusionMLP(nn.Module):
         features. Otherwise, it returns a list of dictionaries collecting all the models' output,
         including the fusion model's.
         """
+
         multimodal_output = {}
         for per_model in self.model:
             per_output = per_model(batch)
@@ -190,28 +209,12 @@ class MultimodalFusionMLP(nn.Module):
                             )
 
                             after_augment = new.clone()
-                            # to_augment = multimodal_features.detach().clone()
-                            # after_augment, _, _ = self.augmenter(None, to_augment)
+
                         after_augment_logit = per_model.head(after_augment)
                         after_augment.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
                         multimodal_output[k][k][FEATURES] = torch.cat(
                             [multimodal_output[k][k][FEATURES], after_augment], dim=0
                         )
-
-                        # multimodal_output[k][k][LOGITS] = torch.cat(
-                        #     [multimodal_output[k][k][LOGITS], after_augment_logit], dim=0
-                        # )
-
-                    # # to pass in fusion
-                    # multimodal_output[k][k][FEATURES].register_hook(
-                    #     lambda grad: -grad * (1 / self.aug_config.adv_weight)
-                    # )
-                    # if self.aug_config.arch == "n_vae":
-                    #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
-                    # elif self.aug_config == "trans":
-                    #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
-                    # multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
-                    # multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
             multimodal_features = []
             output = {}
@@ -246,8 +249,6 @@ class MultimodalFusionMLP(nn.Module):
                             }
                         )
 
-                        # to_augment = multimodal_features.detach().clone()
-                        # after_augment, _, _ = self.augmenter(None, to_augment)
                         after_augment = new.clone()
                     after_augment.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
                     multimodal_features = torch.cat([multimodal_features, after_augment], dim=0)
@@ -294,17 +295,6 @@ class MultimodalFusionMLP(nn.Module):
                                     }
                                 }
                             )
-                        elif self.aug_config.arch == "trans":
-                            new = self.augmenter(k, detached_feature)
-                            regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                            aug_loss.update(
-                                {
-                                    k: {
-                                        "regularizer": regularize_loss,
-                                        "reg_weight": self.aug_config.regularizer_loss_weight,
-                                    }
-                                }
-                            )
 
                         # augment to pass in fusion
                         if self.aug_config.original_ratio > 0.0:
@@ -331,8 +321,6 @@ class MultimodalFusionMLP(nn.Module):
                         )
                         if self.aug_config.arch == "n_vae":
                             for_augment_multimodal_features, _, _ = self.augmenter(k, for_augment_multimodal_features)
-                        elif self.aug_config.arch == "trans":
-                            for_augment_multimodal_features = self.augmenter(k, for_augment_multimodal_features)
                         after_augment_logit = per_model.head(for_augment_multimodal_features)
                         for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
@@ -344,18 +332,6 @@ class MultimodalFusionMLP(nn.Module):
                         else:
                             multimodal_output[k][k][FEATURES] = for_augment_multimodal_features
                             multimodal_output[k][k][LOGITS] = after_augment_logit
-
-                        # # to pass in fusion
-                        # multimodal_output[k][k][FEATURES].register_hook(
-                        #     lambda grad: -grad * (1 / self.aug_config.adv_weight)
-                        # )
-                        # if self.aug_config.arch == "n_vae":
-                        #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
-                        # elif self.aug_config == "trans":
-                        #     multimodal_output[k][k][FEATURES], _, _ = self.augmenter(k, multimodal_output[k][k][FEATURES])
-                        # multimodal_output[k][k][LOGITS] = per_model.head(multimodal_output[k][k][FEATURES])
-                        # multimodal_output[k][k][FEATURES].register_hook(lambda grad: -grad * self.aug_config.adv_weight)
-
             multimodal_features = []
             output = {}
             for per_model, per_adapter in zip(self.model, self.adapter):

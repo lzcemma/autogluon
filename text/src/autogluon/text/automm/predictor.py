@@ -400,7 +400,7 @@ class AutoMMPredictor:
 
         logger.debug(f"column_types: {column_types}")
         logger.debug(f"image columns: {[k for k, v in column_types.items() if v == 'image_path']}")
-
+        print(f"image columns: {[k for k, v in column_types.items() if v == 'image_path']}")
         if self._column_types is not None and self._column_types != column_types:
             warnings.warn(
                 f"Inferred column types {column_types} are inconsistent with "
@@ -735,6 +735,7 @@ class AutoMMPredictor:
             model = create_model(
                 config=config,
                 num_classes=self._output_shape,
+                num_image_columns=len(df_preprocessor.image_path_names),
                 num_numerical_columns=len(df_preprocessor.numerical_feature_names),
                 num_categories=df_preprocessor.categorical_num_categories,
             )
@@ -838,6 +839,21 @@ class AutoMMPredictor:
             train_data=train_df,
             val_data=val_df,
         )
+
+        if config.model.fusion_mlp.augmenter.n_emb > 0:
+            train_dm.prepare_data()
+            train_dm.setup(stage="fit")
+            collect_emb = []
+            for i, batch in enumerate(train_dm.train_dataloader()):
+                if i == 0:
+                    collect_emb = model.collect_embedding(batch)
+                else:
+                    collect_emb = torch.cat([collect_emb, model.collect_embedding(batch)])
+                if len(collect_emb) >= config.model.fusion_mlp.augmenter.n_emb:
+                    collect_emb = collect_emb[: config.model.fusion_mlp.augmenter.n_emb]
+                    break
+
+            model.augmenter.augnets.emb.weight.data = collect_emb
 
         num_gpus = config.env.num_gpus if isinstance(config.env.num_gpus, int) else len(config.env.num_gpus)
         if num_gpus < 0:  # In case config.env.num_gpus is -1, meaning using all gpus.
