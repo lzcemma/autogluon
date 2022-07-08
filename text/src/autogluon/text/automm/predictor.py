@@ -840,7 +840,7 @@ class AutoMMPredictor:
             val_data=val_df,
         )
 
-        if config.model.fusion_mlp.augmenter.n_emb > 0:
+        if config.model.fusion_mlp.augmenter.n_emb > 0 and config.model.fusion_mlp.augmenter.turn_on:
             train_dm.prepare_data()
             train_dm.setup(stage="fit")
             collect_emb = []
