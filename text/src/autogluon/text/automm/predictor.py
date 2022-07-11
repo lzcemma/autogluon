@@ -441,6 +441,10 @@ class AutoMMPredictor:
         self._output_shape = output_shape
         self._column_types = column_types
 
+        # only use consistent loss for classification task
+        if self._problem_type not in [BINARY, MULTICLASS]:
+            config.model.fusion_mlp.augmenter.consist_loss = 0.0
+
         _fit_args = dict(
             train_df=train_data,
             val_df=tuning_data,

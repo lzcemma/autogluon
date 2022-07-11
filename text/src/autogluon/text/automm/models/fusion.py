@@ -183,7 +183,6 @@ class MultimodalFusionMLP(nn.Module):
             multimodal_output[per_model.prefix] = per_output
 
         if self.aug_config.keep_original:
-
             aug_loss = None
             if self.augmenter is not None:
                 if self.pre_adapter and is_training:
@@ -192,7 +191,7 @@ class MultimodalFusionMLP(nn.Module):
                         k = per_model.prefix
 
                         detached_feature = multimodal_output[k][k][FEATURES].detach().clone()
-                        if self.aug_config.arch == "mlp_vae" or self.aug_config.arch == "trans_vae":
+                        if self.aug_config.arch == "mlp_vae":
                             new, m, v = self.augmenter(k, detached_feature)
 
                             regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
@@ -319,7 +318,7 @@ class MultimodalFusionMLP(nn.Module):
                         for_augment_multimodal_features.register_hook(
                             lambda grad: -grad * (1 / self.aug_config.adv_weight)
                         )
-                        if self.aug_config.arch == "n_vae":
+                        if self.aug_config.arch == "mlp_vae":
                             for_augment_multimodal_features, _, _ = self.augmenter(k, for_augment_multimodal_features)
                         after_augment_logit = per_model.head(for_augment_multimodal_features)
                         for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
@@ -378,8 +377,6 @@ class MultimodalFusionMLP(nn.Module):
                     )
                     if self.aug_config.arch == "trans_vae":
                         for_augment_multimodal_features, _, _ = self.augmenter(None, for_augment_multimodal_features)
-                    elif self.aug_config.arch == "trans":
-                        for_augment_multimodal_features = self.augmenter(None, for_augment_multimodal_features)
                     for_augment_multimodal_features.register_hook(lambda grad: -grad * self.aug_config.adv_weight)
 
                     if orignal_multimodal_features is not None:
