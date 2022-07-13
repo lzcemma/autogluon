@@ -1,6 +1,5 @@
 import logging
 from xmlrpc.client import Boolean
-from fastprogress import progress_bar
 import torch
 from torch import nn
 import torch.nn.functional as F
