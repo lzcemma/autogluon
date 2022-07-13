@@ -158,7 +158,7 @@ class LitModule(pl.LightningModule):
                 weight = per_output[WEIGHT] if WEIGHT in per_output else 1
 
                 if name.startswith("fusion") and self.model.training and self.model.aug_config.turn_on:
-                    if self.model.pre_adapter is False and self.model.aug_config.keep_original:
+                    if self.model.aug_config.keep_original:
                         loss += (
                             self.loss_func(
                                 input=per_output[LOGITS].squeeze(dim=1),
@@ -166,13 +166,14 @@ class LitModule(pl.LightningModule):
                             )
                             * weight
                         )
+                        self.log("loss/target", loss, prog_bar=True)
                         if self.model.aug_config.consist_loss > 0.0:
                             org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
                             c_loss = (
                                 consist_loss(aug, org.clone().detach(), self.model.aug_config.consist_t)
                             ) * self.model.aug_config.consist_loss
                             loss += c_loss
-                            self.log("loss/consist", c_loss)
+                            self.log("loss/consist", c_loss, prog_bar=True)
 
                     else:
 
@@ -193,7 +194,6 @@ class LitModule(pl.LightningModule):
                         * weight
                     )
         if "augmenter" in output.keys():
-            self.log("loss/target", loss)
             reg_loss = 0
             kl_loss = 0
             if "transformer_augnet" in output["augmenter"].keys():
@@ -207,8 +207,8 @@ class LitModule(pl.LightningModule):
                         output["augmenter"]["transformer_augnet"]["KLD_loss"]
                         * output["augmenter"]["transformer_augnet"]["kl_weight"]
                     )
-                self.log("loss/kl_loss", kl_loss)
-                self.log("loss/reg_loss", reg_loss)
+                self.log("loss/kl_loss", kl_loss, prog_bar=True)
+                self.log("loss/reg_loss", reg_loss, prog_bar=True)
                 loss = loss + reg_loss + kl_loss
             else:
                 for _, l in output["augmenter"].items():
@@ -280,7 +280,6 @@ class LitModule(pl.LightningModule):
 
             output, loss = self._shared_step(batch)
             self.manual_backward(loss)
-            self.log("train_loss", loss, prog_bar=True)
 
             # gradient accumulation
             if (batch_idx + 1) % self.hparams.grad_steps == 0 or self.trainer.is_last_batch:
