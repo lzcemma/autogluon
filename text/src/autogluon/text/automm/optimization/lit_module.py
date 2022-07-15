@@ -166,6 +166,7 @@ class LitModule(pl.LightningModule):
                             * weight
                         )
                         self.log("loss/target", loss, prog_bar=True)
+
                         if self.model.aug_config.consist_loss > 0.0:
                             org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
                             c_loss = (
@@ -173,16 +174,6 @@ class LitModule(pl.LightningModule):
                             ) * self.model.aug_config.consist_loss
                             loss += c_loss
                             self.log("loss/consist", c_loss, prog_bar=True)
-
-                    else:
-
-                        loss += (
-                            self.loss_func(
-                                input=per_output[LOGITS].squeeze(dim=1),
-                                target=label,
-                            )
-                            * weight
-                        )
 
                 else:
                     loss += (
@@ -195,31 +186,15 @@ class LitModule(pl.LightningModule):
         if "augmenter" in output.keys():
             reg_loss = 0
             kl_loss = 0
-            if "transformer_augnet" in output["augmenter"].keys():
-                if "regularizer" in output["augmenter"]["transformer_augnet"].keys():
-                    reg_loss = (
-                        output["augmenter"]["transformer_augnet"]["regularizer"]
-                        * output["augmenter"]["transformer_augnet"]["reg_weight"]
-                    )
-                if "KLD_loss" in output["augmenter"]["transformer_augnet"].keys():
-                    kl_loss = (
-                        output["augmenter"]["transformer_augnet"]["KLD_loss"]
-                        * output["augmenter"]["transformer_augnet"]["kl_weight"]
-                    )
-                self.log("loss/kl_loss", kl_loss, prog_bar=True)
-                self.log("loss/reg_loss", reg_loss, prog_bar=True)
-                loss = loss + reg_loss + kl_loss
-            else:
-                for _, l in output["augmenter"].items():
-                    # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
-                    if "KLD_loss" in l.keys():
-                        kl_loss += l["KLD_loss"] * l["kl_weight"]
-                    if "regularizer" in l.keys():
-                        reg_loss += l["regularizer"] * l["reg_weight"]
-                self.log("loss/reg_loss", reg_loss, prog_bar=True)
-                self.log("loss/kl_loss", kl_loss, prog_bar=True)
-                # print(f"reg_loss{reg_loss}, kl_loss{kl_loss}")
-                loss = loss + reg_loss + kl_loss
+            for _, l in output["augmenter"].items():
+                # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
+                if "KLD_loss" in l.keys():
+                    kl_loss += l["KLD_loss"] * l["kl_weight"]
+                if "regularizer" in l.keys():
+                    reg_loss += l["regularizer"] * l["reg_weight"]
+            self.log("loss/reg_loss", reg_loss, prog_bar=True)
+            self.log("loss/kl_loss", kl_loss, prog_bar=True)
+            loss = loss + reg_loss + kl_loss
         return loss
 
     def _compute_metric_score(
