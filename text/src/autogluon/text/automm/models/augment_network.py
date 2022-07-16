@@ -18,7 +18,9 @@ class VAETransformer(nn.Module):
         # memory slot
         if self.config.n_emb != 0:
             self.emb = nn.Embedding(config.n_emb, in_feautres)
+            # self.emb = nn.Embedding(config.n_emb, in_feautres).requires_grad_(False)
             self.emb_idx = nn.Parameter(torch.arange(0, config.n_emb, dtype=torch.int), requires_grad=False)
+            # nn.init.xavier_uniform_(self.emb.weight)
 
         # encoder
         encoder_layers = TransformerEncoderLayer(self.emb_d, config.n_head, config.tran_hidden, norm_first=True)
@@ -61,7 +63,7 @@ class VAETransformer(nn.Module):
             emb = self.emb(idx)  # [B, # emb, emb dim] torch.Size([8, 16, 1024])
             input = torch.cat([input, emb], dim=1)  # [B, # modality + # emb, emb dim]  torch.Size([8, 19, 1024])
 
-        hidden = self.transformer_encoder(input)  # ([8, 2, 768])
+        hidden = self.transformer_encoder(input)[:, : self.n_modality, :]  # ([8, 2, 768])
 
         z_mu, z_logvar = self.encoder_fc_z_mu(hidden), self.encoder_fc_z_logvar(hidden)
 
@@ -71,6 +73,10 @@ class VAETransformer(nn.Module):
 
         noise = self.gating(self.last_layer(self.transformer_decoder(hidden)[:, : self.n_modality, :]))
         recon_x = X.reshape(-1, self.n_modality, self.emb_d) + noise
+
+        if self.config.n_emb != 0 and self.config.queue:
+            new_emb = torch.cat([self.emb.weight.data, X.reshape(-1, self.emb_d)])
+            self.emb.weight.data = new_emb[-self.config.n_emb :]
 
         return recon_x.reshape(len(X), -1), z_mu, z_logvar
 

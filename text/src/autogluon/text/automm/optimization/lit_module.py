@@ -158,13 +158,23 @@ class LitModule(pl.LightningModule):
 
                 if name.startswith("fusion") and self.model.training and self.model.aug_config.turn_on:
                     if self.model.aug_config.keep_original:
-                        loss += (
-                            self.loss_func(
-                                input=per_output[LOGITS].squeeze(dim=1),
-                                target=label.tile((2,)),
+                        if self.model.aug_config.target_loss > 0.0:
+                            loss += (
+                                self.loss_func(
+                                    input=per_output[LOGITS].squeeze(dim=1),
+                                    target=label.tile((2,)),
+                                )
+                                * self.model.aug_config.target_loss
                             )
-                            * weight
-                        )
+                        else:
+                            org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
+                            loss += (
+                                self.loss_func(
+                                    input=org,
+                                    target=label,
+                                )
+                                * weight
+                            )
                         self.log("loss/target", loss, prog_bar=True)
 
                         if self.model.aug_config.consist_loss > 0.0:

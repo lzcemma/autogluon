@@ -127,6 +127,7 @@ model:
       n_layer: 2
       n_emb: 0
       n_head: 8
+      queue: False
       gating: "identity"
       tran_hidden: 2048
       kl_loss_weight: 0.1
@@ -136,6 +137,7 @@ model:
       keep_original: True
       consist_loss: 0.1
       consist_t: 0.5
+      target_loss: 1.0
   fusion_transformer:
     hidden_size: 192
     n_blocks: 3
