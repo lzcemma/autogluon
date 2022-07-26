@@ -7,7 +7,7 @@ from .utils import init_weights
 from typing import List, Optional, Tuple
 from omegaconf import OmegaConf, DictConfig
 from ..constants import LABEL, LOGITS, FEATURES, WEIGHT, AUTOMM
-
+from .mlp import Unit
 
 class VAE(nn.Module):
     def __init__(self, input_dim, hidden_dim, z_dim=16) -> None:

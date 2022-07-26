@@ -177,11 +177,11 @@ class LitModule(pl.LightningModule):
                             )
                         self.log("loss/target", loss, prog_bar=True)
 
-                        if self.model.aug_config.consist_loss > 0.0:
+                        if self.model.aug_config.consist_adv: 
                             org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
                             c_loss = (
                                 consist_loss(aug, org.clone().detach(), self.model.aug_config.consist_t)
-                            ) * self.model.aug_config.consist_loss
+                            ) * self.model.aug_config.consist_loss_weight
                             loss += c_loss
                             self.log("loss/consist", c_loss, prog_bar=True)
 
@@ -196,15 +196,20 @@ class LitModule(pl.LightningModule):
         if "augmenter" in output.keys():
             reg_loss = 0
             kl_loss = 0
-            for _, l in output["augmenter"].items():
-                # l : {'regularizer': tensor(0.8392), 'KLD_loss': tensor(25.7939), 'reg_weight': 0.1, 'kl_weight': 0.001}
-                if "KLD_loss" in l.keys():
-                    kl_loss += l["KLD_loss"] * l["kl_weight"]
-                if "regularizer" in l.keys():
-                    reg_loss += l["regularizer"] * l["reg_weight"]
+            c_loss = 0
+            l = output["augmenter"]
+            if "KLD_loss" in l.keys():
+                kl_loss = l["KLD_loss"] * l["kl_weight"]
+            if "regularizer" in l.keys():
+                reg_loss = l["regularizer"] * l["reg_weight"]
+            if "consist_loss" in l.keys():
+                c_loss = l["consist_loss"] * l['cons_weight']
+
+        
             self.log("loss/reg_loss", reg_loss, prog_bar=True)
             self.log("loss/kl_loss", kl_loss, prog_bar=True)
-            loss = loss + reg_loss + kl_loss
+            self.log("loss/consist", c_loss, prog_bar=True)
+            loss = loss + reg_loss + kl_loss + c_loss
         return loss
 
     def _compute_metric_score(

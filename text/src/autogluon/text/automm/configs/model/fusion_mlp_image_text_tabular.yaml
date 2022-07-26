@@ -120,11 +120,11 @@ model:
     normalization: "layer_norm"
     data_types:
     augmenter:
-      turn_on: False
-      arch: "trans_vae"   # trans denotres for transfomer; "mlp_vae" denotes for VAE for every modality
+      turn_on: True
+      arch: "mlp_vae"   # trans denotres for transfomer; "mlp_vae" denotes for VAE for every modality
       cross_modality: True
       z_dim: 8
-      n_layer: 2
+      n_layer: 4
       n_emb: 0
       n_head: 8
       queue: False
@@ -133,11 +133,13 @@ model:
       kl_loss_weight: 0.1
       regularizer_loss_weight: 0.1
       adv_weight: 0.0001
-      original_ratio: 0.5
-      keep_original: True
-      consist_loss: 0.1
+      consist_reg: True
+      consist_adv: False
+      consist_loss_weight: 0.01
       consist_t: 0.5
       target_loss: 1.0
+      emb_dropout: 0.5
+      keep_original: True
   fusion_transformer:
     hidden_size: 192
     n_blocks: 3
