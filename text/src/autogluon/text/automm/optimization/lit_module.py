@@ -204,11 +204,12 @@ class LitModule(pl.LightningModule):
                 reg_loss = l["regularizer"] * l["reg_weight"]
             if "consist_loss" in l.keys():
                 c_loss = l["consist_loss"] * l['cons_weight']
+                self.log("loss/consist", c_loss, prog_bar=True)
 
         
             self.log("loss/reg_loss", reg_loss, prog_bar=True)
             self.log("loss/kl_loss", kl_loss, prog_bar=True)
-            self.log("loss/consist", c_loss, prog_bar=True)
+            
             loss = loss + reg_loss + kl_loss + c_loss
         return loss
 

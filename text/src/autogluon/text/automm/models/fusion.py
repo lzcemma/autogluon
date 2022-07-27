@@ -207,6 +207,7 @@ class MultimodalFusionMLP(nn.Module):
                 new, m, v = self.augmenter( detached_feature)
                 regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
                 KLD_loss = self.augmenter.kld(m, v) / new.size()[0] / self.aug_config.z_dim
+
                 if self.aug_config.consist_reg: 
                     with torch.no_grad():
                         ori_logits = self.head( self.fusion_mlp(detached_feature))
