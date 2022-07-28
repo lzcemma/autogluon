@@ -904,8 +904,6 @@ class AutoMMPredictor:
             lr_mult=config.optimization.lr_mult,
             weight_decay=config.optimization.weight_decay,
             warmup_steps=config.optimization.warmup_steps,
-            aug_optimizer=config.optimization.aug_optimizer,
-            aug_turn_on=config.optimization.aug_turn_on,
             aug_lr=config.optimization.aug_learning_rate,
             aug_optim_type=config.optimization.aug_optim_type,
             aug_weight_decay=config.optimization.aug_weight_decay,
@@ -1010,7 +1008,7 @@ class AutoMMPredictor:
         blacklist_msgs = ["already configured with model summary"]
         log_filter = LogFilter(blacklist_msgs)
         with apply_log_filter(log_filter):
-            if config.optimization.aug_optimizer:
+            if model.augmenter is not None:
                 trainer = pl.Trainer(
                     gpus=num_gpus if not hpo_mode else None,  # ray lightning requires not specifying gpus
                     auto_select_gpus=config.env.auto_select_gpus if num_gpus != 0 else False,
@@ -1029,7 +1027,6 @@ class AutoMMPredictor:
                     fast_dev_run=config.env.fast_dev_run,
                     val_check_interval=config.optimization.val_check_interval,
                 )
-
             else:
                 trainer = pl.Trainer(
                     gpus=num_gpus if not hpo_mode else None,  # ray lightning requires not specifying gpus

@@ -142,75 +142,59 @@ class LitModule(pl.LightningModule):
                 "which must be used with a customized metric function."
             )
         self.custom_metric_func = custom_metric_func
-        if aug_optimizer:
+        if self.model.augmenter is not None:
             self.automatic_optimization = False
-
+    
     def _compute_loss(
         self,
         output: Dict,
         label: torch.Tensor,
     ):
-
         loss = 0
         for name, per_output in output.items():
             if name != "augmenter":
                 weight = per_output[WEIGHT] if WEIGHT in per_output else 1
-
                 if name.startswith("fusion") and self.model.training and self.model.aug_config.turn_on:
-                    if self.model.aug_config.keep_original:
-                        if self.model.aug_config.target_loss > 0.0:
-                            loss += (
-                                self.loss_func(
-                                    input=per_output[LOGITS].squeeze(dim=1),
-                                    target=label.tile((2,)),
-                                )
-                                * self.model.aug_config.target_loss
-                            )
-                        else:
-                            org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
-                            loss += (
-                                self.loss_func(
-                                    input=org,
-                                    target=label,
-                                )
-                                * weight
-                            )
-                        self.log("loss/target", loss, prog_bar=True)
-
-                        if self.model.aug_config.consist_adv: 
-                            org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
-                            c_loss = (
-                                consist_loss(aug, org.clone().detach(), self.model.aug_config.consist_t)
-                            ) * self.model.aug_config.consist_loss_weight
-                            loss += c_loss
-                            self.log("loss/consist", c_loss, prog_bar=True)
-
+                    org, aug = torch.chunk(per_output[LOGITS].squeeze(dim=1), 2)
+                    org_target_loss = self.loss_func(
+                            input=org,
+                            target=label,
+                        ) * self.model.aug_config.ori_weight
+                    aug_target_loss = self.loss_func(
+                            input=aug,
+                            target=label,
+                        ) * self.model.aug_config.aug_weight
+                    loss += org_target_loss
+                    loss += aug_target_loss
+                    self.log("loss/org_target_loss", org_target_loss, prog_bar=True)
+                    self.log("loss/aug_target_loss", aug_target_loss, prog_bar=True)
                 else:
                     loss += (
                         self.loss_func(
                             input=per_output[LOGITS].squeeze(dim=1),
                             target=label,
-                        )
-                        * weight
+                        )* weight
                     )
         if "augmenter" in output.keys():
-            reg_loss = 0
-            kl_loss = 0
-            c_loss = 0
-            l = output["augmenter"]
-            if "KLD_loss" in l.keys():
-                kl_loss = l["KLD_loss"] * l["kl_weight"]
-            if "regularizer" in l.keys():
-                reg_loss = l["regularizer"] * l["reg_weight"]
-            if "consist_loss" in l.keys():
-                c_loss = l["consist_loss"] * l['cons_weight']
-                self.log("loss/consist", c_loss, prog_bar=True)
+            loss = 0
+            if "KLD_loss" in output["augmenter"].keys():
+                kl_loss = output["augmenter"]["KLD_loss"] * output["augmenter"]["kl_weight"]
+                self.log("loss/kl_loss", kl_loss, prog_bar=True)
+                loss += kl_loss
 
-        
-            self.log("loss/reg_loss", reg_loss, prog_bar=True)
-            self.log("loss/kl_loss", kl_loss, prog_bar=True)
-            
-            loss = loss + reg_loss + kl_loss + c_loss
+            if "regularizer" in output["augmenter"].keys():
+                reg_loss = output["augmenter"]["regularizer"] * output["augmenter"]["reg_weight"]
+                self.log("loss/reg_loss", reg_loss, prog_bar=True)
+                loss += reg_loss
+
+            if "consist_loss" in output["augmenter"].keys():
+                c_loss = output["augmenter"]["consist_loss"] * output["augmenter"]['cons_weight']
+                self.log("loss/consist", c_loss, prog_bar=True)
+                loss += c_loss
+
+            loss += self.loss_func(
+                            input=output["augmenter"][LOGITS].squeeze(dim=1),
+                            target=label)
         return loss
 
     def _compute_metric_score(
@@ -261,28 +245,30 @@ class LitModule(pl.LightningModule):
         -------
         Average loss of the mini-batch data.
         """
-        if self.hparams.aug_optimizer:
-            if self.hparams.aug_turn_on:
-                target_optimizer, aug_optimizer = self.optimizers()
-            else:
-                target_optimizer = self.optimizers()
+        if self.model.augmenter is not None:
+
+            target_optimizer, aug_optimizer = self.optimizers()
             target_opt_scheduler = self.lr_schedulers()
 
+            # optimize target network
             output, loss = self._shared_step(batch)
+
+            target_optimizer.zero_grad()
             self.manual_backward(loss)
+            nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            target_optimizer.step()
+            target_opt_scheduler.step()
 
-            # gradient accumulation
-            if (batch_idx + 1) % self.hparams.grad_steps == 0 or self.trainer.is_last_batch:
-                nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            
+            # optimize augmentation network
+            output = self.model.aug_forward(batch)
+            aug_loss = self._compute_loss(output=output, label=batch[self.model.label_key])
 
-                target_optimizer.step()
-                target_opt_scheduler.step()
-                if self.hparams.aug_turn_on:
-                    aug_optimizer.step()
+            aug_optimizer.zero_grad()
+            nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.manual_backward(aug_loss)
+            aug_optimizer.step()
 
-                target_optimizer.zero_grad()
-                if self.hparams.aug_turn_on:
-                    aug_optimizer.zero_grad()
         else:
             output, loss = self._shared_step(batch)
             self.log("train_loss", loss)
@@ -398,6 +384,7 @@ class LitModule(pl.LightningModule):
             )
             logger.debug(f"trainer.max_epochs: {self.trainer.max_epochs}")
             logger.debug(f"trainer.accumulate_grad_batches: {self.hparams.grad_steps}")
+            print(f"trainer.accumulate_grad_batches: {self.hparams.grad_steps}")
         else:
             max_steps = self.trainer.max_steps
 
@@ -420,8 +407,8 @@ class LitModule(pl.LightningModule):
         sched = {"scheduler": scheduler, "interval": "step"}
 
         aug_optimizer = None
-        if self.hparams.aug_optimizer and self.hparams.aug_turn_on:
-            print("initilize augment optimizer")
+        if self.model.augmenter is not None:
+            print("------------initilize augment optimizer---------------")
             # augment network optimizer
             aug_grouped_parameters = get_augment_network_parameters(self.model, self.hparams.aug_lr)
             aug_optimizer = get_optimizer(

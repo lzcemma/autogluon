@@ -89,6 +89,8 @@ class VAE(nn.Module):
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
 
+        print(f" VAE MLP input_dim {input_dim}")
+
         # Encoder P(Z|X)
         encoder_layers = []
         dims = [input_dim] + hidden_dim
@@ -152,7 +154,7 @@ class AugmentNetwork(nn.Module):
         n_modality: Optional[int],
     ) -> None:
         super().__init__()
-        print("Initializaing Augmentation Network")
+        print("------------------Initializaing Augmentation Network---------------")
 
         self.config = config
         self.feature_dims = feature_dims  # [('hf_text', 768), ('timm_image', 1024), ('clip', 512)]

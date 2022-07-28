@@ -161,7 +161,7 @@ class MultimodalFusionMLP(nn.Module):
                     per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES])
                 )
             return torch.cat(multimodal_features, dim=0)
-
+    
     def forward(self, batch: dict, is_training: Optional[bool]):
         """
 
@@ -179,11 +179,13 @@ class MultimodalFusionMLP(nn.Module):
         including the fusion model's.
         """
 
+        # pass through backbones
         multimodal_output = {}
         for per_model in self.model:
             per_output = per_model(batch)
             multimodal_output[per_model.prefix] = per_output
 
+        # pass through adatper to match backbone embedding dimensions
         multimodal_features = []
         output = {}
         for per_model, per_adapter in zip(self.model, self.adapter):
@@ -193,36 +195,14 @@ class MultimodalFusionMLP(nn.Module):
             if self.loss_weight is not None:
                 multimodal_output[per_model.prefix][per_model.prefix].update({WEIGHT: self.loss_weight})
                 output.update(multimodal_output[per_model.prefix])
-        
         multimodal_features = torch.cat(multimodal_features, dim=1)
 
-        # pass through augmentation network after adapter
-        aug_loss = None
+        # pass through augmentation network 
         if is_training:
             if self.augmenter is not None:
                 # train augment network
-                aug_loss = {}
-                detached_feature = multimodal_features.detach().clone()  # [8, 512]
-
-                new, m, v = self.augmenter( detached_feature)
-                regularize_loss = self.augmenter.l2_regularize(detached_feature, new)
-                KLD_loss = self.augmenter.kld(m, v) / new.size()[0] / self.aug_config.z_dim
-
-                if self.aug_config.consist_reg: 
-                    with torch.no_grad():
-                        ori_logits = self.head( self.fusion_mlp(detached_feature))
-                    aug_logits = self.head( self.fusion_mlp(new))
-                    consist_reg = consist_loss( aug_logits, ori_logits.detach(), self.aug_config.consist_t)
-                    aug_loss.update({ "consist_loss": consist_reg, "cons_weight": self.aug_config.consist_loss_weight })
-                aug_loss.update({
-                    "regularizer": regularize_loss,
-                    "KLD_loss": KLD_loss,
-                    "reg_weight": self.aug_config.regularizer_loss_weight,
-                    "kl_weight": self.aug_config.kl_loss_weight,
-                    })
-
-                after_augment = new.clone()
-                after_augment.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
+                with torch.no_grad():
+                    after_augment, _, _ = self.augmenter( multimodal_features )
                 multimodal_features = torch.cat([multimodal_features, after_augment], dim=0)
                 
         features = self.fusion_mlp(multimodal_features)
@@ -238,10 +218,72 @@ class MultimodalFusionMLP(nn.Module):
             output.update(fusion_output)
         else:
             output = fusion_output
+        return output
 
-        if aug_loss is not None:
-            output.update({"augmenter": aug_loss})
-      
+    def aug_forward(self, batch: dict):
+        """
+
+        Parameters
+        ----------
+        batch
+            A dictionary containing the input mini-batch data. The fusion model doesn't need to
+            directly access the mini-batch data since it aims to fuse the individual models'
+            output features.
+
+        Returns
+        -------
+        If "loss_weight" is None, it returns dictionary containing the fusion model's logits and
+        features. Otherwise, it returns a list of dictionaries collecting all the models' output,
+        including the fusion model's.
+        """
+        assert self.augmenter is not None
+        # pass through backbones and adapters
+        with torch.no_grad():
+            multimodal_output = {}
+            for per_model in self.model:
+                per_output = per_model(batch)
+                multimodal_output[per_model.prefix] = per_output
+
+            multimodal_features = []
+            for per_model, per_adapter in zip(self.model, self.adapter):
+                multimodal_features.append(
+                        per_adapter(multimodal_output[per_model.prefix][per_model.prefix][FEATURES])
+                )
+            
+            multimodal_features = torch.cat(multimodal_features, dim=1)
+
+        # augmentatio network forward
+        aug_loss = {}
+        detached_feature = multimodal_features.detach().clone()  # [8, 512]
+        new, m, v = self.augmenter( detached_feature)
+
+        # augmentation network regularization loss
+        if self.aug_config.regularizer_loss_weight > 0.0:
+            l2_loss = self.augmenter.l2_regularize(detached_feature, new)
+            aug_loss.update({
+            "regularizer": l2_loss,
+            "reg_weight": self.aug_config.regularizer_loss_weight,
+            })
+        if self.aug_config.kl_loss_weight > 0.0:
+            KLD_loss = self.augmenter.kld(m, v) / new.size()[0] / self.aug_config.z_dim
+            aug_loss.update({
+                "KLD_loss": KLD_loss,
+                "kl_weight": self.aug_config.kl_loss_weight,
+                })
+        if self.aug_config.consist_reg: 
+            with torch.no_grad():
+                ori_logits = self.head( self.fusion_mlp(detached_feature))
+            aug_logits = self.head( self.fusion_mlp(new))
+            consist_reg = consist_loss( aug_logits, ori_logits.detach(), self.aug_config.consist_t)
+            aug_loss.update({ "consist_loss": consist_reg, "cons_weight": self.aug_config.consist_loss_weight })
+
+        # adversarial augmentation loss
+        new.register_hook(lambda grad: -grad * (self.aug_config.adv_weight))
+        features = self.fusion_mlp(new)
+        logits = self.head(features)
+        aug_loss.update({ LOGITS: logits})
+
+        output = {"augmenter": aug_loss}
         return output
 
     def get_layer_ids(

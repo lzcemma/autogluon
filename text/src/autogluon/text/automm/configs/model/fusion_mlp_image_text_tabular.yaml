@@ -137,7 +137,8 @@ model:
       consist_adv: False
       consist_loss_weight: 0.01
       consist_t: 0.5
-      target_loss: 1.0
+      ori_weight: 2.0
+      aug_weight: 1.0
       emb_dropout: 0.5
       keep_original: True
   fusion_transformer:
