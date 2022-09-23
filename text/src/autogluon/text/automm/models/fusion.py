@@ -10,7 +10,35 @@ from .ft_transformer import FT_Transformer, CLSToken
 from omegaconf import OmegaConf, DictConfig
 from .augment_network import AugmentNetwork
 import torch.nn.functional as F
+import numpy as np
+from torch.autograd import Variable
+
 logger = logging.getLogger(AUTOMM)
+
+#for manifold mixup
+def get_lambda(alpha=1.0):
+    '''Return lambda'''
+    if alpha > 0.:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.
+    return lam
+
+#for manifold mixup
+def mixup_process(out, target_reweighted, lam):
+    indices = np.random.permutation(out.size(0))
+    out = out*lam + out[indices]*(1-lam)
+    target_shuffled_onehot = target_reweighted[indices]
+    target_reweighted = target_reweighted * lam + target_shuffled_onehot * (1 - lam)
+    
+    return out, target_reweighted
+#for manifold mixup
+def to_one_hot(inp,num_classes):
+    y_onehot = torch.FloatTensor(inp.size(0), num_classes)
+    y_onehot.zero_()
+
+    y_onehot.scatter_(1, inp.unsqueeze(1).data.cpu(), 1)
+    return y_onehot
 
 def consist_loss(p_logits, q_logits, threshold):
     p = F.softmax(p_logits, dim=1)
@@ -42,6 +70,8 @@ class MultimodalFusionMLP(nn.Module):
         normalization: Optional[str] = "layer_norm",
         loss_weight: Optional[float] = None,
         aug_config: Optional[DictConfig] = None,
+        manifold_mixup_config: Optional[DictConfig] = None,
+        mixgen_config: Optional[DictConfig] = None
     ):
         """
         Parameters
@@ -138,6 +168,14 @@ class MultimodalFusionMLP(nn.Module):
         self.name_to_id = self.get_layer_ids()
         self.head_layer_names = [n for n, layer_id in self.name_to_id.items() if layer_id == 0]
 
+        self.manifold_mixup_config = manifold_mixup_config
+        self.num_classes = num_classes
+        print("manifold_mixup_config", self.manifold_mixup_config)
+
+        self.mixgen_config = mixgen_config
+        print("mixgen_config", self.mixgen_config)
+
+
     def construct_augnet(self):
         model_feature_dict = [(per_model.prefix, per_model.out_features) for per_model in self.model]
         return AugmentNetwork(self.aug_config, model_feature_dict, self.adapter_out_dim, len(self.model))
@@ -204,7 +242,14 @@ class MultimodalFusionMLP(nn.Module):
                 with torch.no_grad():
                     after_augment, _, _ = self.augmenter( multimodal_features )
                 multimodal_features = torch.cat([multimodal_features, after_augment], dim=0)
-                
+        
+        if is_training and self.manifold_mixup_config != None and self.manifold_mixup_config.turn_on:
+            lam = get_lambda(self.manifold_mixup_config.alpha)
+            lam = torch.from_numpy(np.array([lam]).astype('float32')).cuda()
+            lam = Variable(lam)
+            target_reweighted = to_one_hot(batch[self.label_key], self.num_classes).cuda()
+            multimodal_features, target_reweighted = mixup_process(multimodal_features, target_reweighted, lam=lam)
+
         features = self.fusion_mlp(multimodal_features)
         logits = self.head(features)
         fusion_output = {
@@ -218,7 +263,11 @@ class MultimodalFusionMLP(nn.Module):
             output.update(fusion_output)
         else:
             output = fusion_output
-        return output
+        
+        if is_training and self.manifold_mixup_config != None and self.manifold_mixup_config.turn_on:
+            return output, target_reweighted
+        else:
+            return output
 
     def aug_forward(self, batch: dict):
         """

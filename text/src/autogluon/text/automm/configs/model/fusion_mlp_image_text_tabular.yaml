@@ -120,7 +120,7 @@ model:
     normalization: "layer_norm"
     data_types:
     augmenter:
-      turn_on: True
+      turn_on: False
       arch: "mlp_vae"   # trans denotres for transfomer; "mlp_vae" denotes for VAE for every modality
       cross_modality: True
       z_dim: 8
@@ -141,6 +141,12 @@ model:
       aug_weight: 1.0
       emb_dropout: 0.5
       keep_original: True
+    manifold_mixup:
+      turn_on: True
+      alpha: 0.8
+    mixgen:
+      turn_on: False
+      alpha: 0.5
   fusion_transformer:
     hidden_size: 192
     n_blocks: 3

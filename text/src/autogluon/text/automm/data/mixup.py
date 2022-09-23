@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from timm.data.mixup import Mixup, mixup_target, cutmix_bbox_and_lam
-
+import copy
 
 class MixupModule(Mixup):
     """
@@ -162,6 +162,24 @@ def mixup_others(x, lam):
         target = x * lam + x.flip(0) * (1.0 - lam)
     return target
 
+def mixgen(batch, model, alpha = 0.5):
+    """
+    Mixgen applied to image and text
+    """
+    batch_size = len(batch[model.label_key])
+    index = np.random.permutation(batch_size)
+    for permodel in model.model:
+        if hasattr(permodel, "image_key"):
+            batch_copy = copy.deepcopy(batch[permodel.image_key])
+            for i in range(batch_size):
+                batch[permodel.image_key][i,:] = alpha * batch_copy[i,:] + (1 - alpha) * batch_copy[index[i],:]
+        if hasattr(permodel, "text_token_ids_key"):
+            batch_copy = copy.deepcopy(batch[permodel.text_token_ids_key])
+            for i in range(batch_size):
+                mark = torch.nonzero(batch_copy[i])[-1].item()+1
+                new = torch.cat((batch_copy[i][:mark], batch_copy[index[i]] ))[:len(batch[permodel.text_token_ids_key][i])]
+                batch[permodel.text_token_ids_key][i] = new
+    return batch
 
 def multimodel_mixup(batch, model, mixup_fn):
     """

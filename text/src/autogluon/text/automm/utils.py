@@ -744,6 +744,8 @@ def create_model(
                 normalization=model_config.normalization,
                 loss_weight=model_config.weight if hasattr(model_config, "weight") else None,
                 aug_config=OmegaConf.select(model_config, "augmenter"),
+                manifold_mixup_config = OmegaConf.select(model_config, "manifold_mixup"),
+                mixgen_config = OmegaConf.select(model_config, "mixgen")
             )
             continue
         elif model_name.lower().startswith(FUSION_TRANSFORMER):
@@ -766,6 +768,8 @@ def create_model(
                 adapt_in_features=model_config.adapt_in_features,
                 loss_weight=model_config.weight if hasattr(model_config, "weight") else None,
                 aug_config=OmegaConf.select(model_config, "augmenter"),
+                manifold_mixup_config = OmegaConf.select(model_config, "manifold_mixup"),
+                mixgen_config = OmegaConf.select(model_config, "mixgen")
             )
             continue
         else:

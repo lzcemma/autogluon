@@ -14,7 +14,7 @@ from .utils import (
 )
 from ..constants import LOGITS, WEIGHT, AUTOMM
 from typing import Union, Optional, List, Dict, Callable
-from ..data.mixup import MixupModule, multimodel_mixup
+from ..data.mixup import MixupModule, multimodel_mixup, mixgen
 import torchmetrics
 from torchmetrics.aggregation import BaseAggregator
 from torch.nn.modules.loss import _Loss
@@ -222,7 +222,14 @@ class LitModule(pl.LightningModule):
         if self.mixup_fn is not None:
             self.mixup_fn.mixup_enabled = self.training & (self.current_epoch < self.hparams.mixup_off_epoch)
             batch, label = multimodel_mixup(batch=batch, model=self.model, mixup_fn=self.mixup_fn)
-        output = self.model(batch, self.training)
+        
+        if self.model.mixgen_config.turn_on and self.training:
+            batch = mixgen(batch = batch, model = self.model, alpha = self.model.mixgen_config.alpha)
+            output = self.model(batch, self.training)
+        elif self.model.manifold_mixup_config.turn_on and self.training:
+            output, label = self.model(batch, self.training)
+        else:
+            output = self.model(batch, self.training)
         loss = self._compute_loss(output=output, label=label)
         return output, loss
 
